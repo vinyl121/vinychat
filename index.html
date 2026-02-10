@@ -9,8 +9,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-
-    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
@@ -29,29 +27,25 @@
                 <div id="auth-forms">
                     <div id="login-form">
                         <h2>Вход</h2>
-                        <div class="input-group">
-                            <input type="email" id="login-email" placeholder="Email" required>
-                        </div>
-                        <div class="input-group">
-                            <input type="password" id="login-password" placeholder="Пароль" required>
-                        </div>
+                        <div class="input-group"><input type="email" id="login-email" placeholder="Email"></div>
+                        <div class="input-group"><input type="password" id="login-password" placeholder="Пароль"></div>
                         <button id="btn-login" class="primary-btn">Войти</button>
+                        <div style="margin: 15px 0; opacity: 0.5;">или</div>
+                        <button id="btn-google" class="secondary-btn"
+                            style="background: white; color: black; display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;">
+                            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google.svg" width="18">
+                            Войти через Google
+                        </button>
                         <p class="auth-switch">Нет аккаунта? <a href="#" id="show-register">Создать</a></p>
                     </div>
 
                     <div id="register-form" class="hidden">
                         <h2>Регистрация</h2>
-                        <div class="input-group">
-                            <input type="text" id="reg-username" placeholder="Твое имя (ник)" required>
-                        </div>
-                        <div class="input-group">
-                            <input type="email" id="reg-email" placeholder="Email" required>
-                        </div>
-                        <div class="input-group">
-                            <input type="password" id="reg-password" placeholder="Пароль" required>
-                        </div>
-                        <button id="btn-register" class="primary-btn">Регистрация</button>
-                        <p class="auth-switch">Уже есть аккаунт? <a href="#" id="show-login">Войти</a></p>
+                        <div class="input-group"><input type="text" id="reg-username" placeholder="Никнейм"></div>
+                        <div class="input-group"><input type="email" id="reg-email" placeholder="Email"></div>
+                        <div class="input-group"><input type="password" id="reg-password" placeholder="Пароль"></div>
+                        <button id="btn-register" class="primary-btn">Создать аккаунт</button>
+                        <p class="auth-switch">Есть аккаунт? <a href="#" id="show-login">Войти</a></p>
                     </div>
                 </div>
             </div>
@@ -61,32 +55,33 @@
         <div id="chat-screen" class="screen">
             <aside class="sidebar glass-effect">
                 <div class="sidebar-header">
-                    <div class="user-profile-brief">
+                    <div class="user-profile-brief" style="cursor:pointer" id="btn-settings" title="Настройки">
                         <div class="avatar" id="current-user-avatar">V</div>
                         <div class="user-info">
-                            <span id="current-username" class="username">User</span>
-                            <span class="status online">Онлайн</span>
+                            <span id="current-username" class="username">Загрузка...</span>
+                            <span class="status online">Настройки ⚙️</span>
                         </div>
                     </div>
-                    <button id="btn-logout" title="Выйти" class="icon-btn">🚪</button>
+                    <button id="btn-logout" class="icon-btn"
+                        style="font-size: 12px; border: 1px solid rgba(255,255,255,0.2); padding: 5px 10px; border-radius: 8px;">Выход</button>
                 </div>
 
-                <div class="search-bar">
-                    <input type="text" id="chat-search" placeholder="Поиск людей...">
+                <div class="search-bar" style="padding: 0 20px 15px;">
+                    <input type="text" id="chat-search" placeholder="🔍 Найти людей или группы...">
                 </div>
 
                 <div class="chat-list" id="chat-list"></div>
 
-                <div class="sidebar-footer">
-                    <button id="btn-create-group" class="action-btn">+ Создать группу</button>
+                <div class="sidebar-footer" style="padding: 15px 20px; display: flex; gap: 10px;">
+                    <button id="btn-create-group" class="action-btn" style="flex:1">+ Группа</button>
                 </div>
             </aside>
 
             <main class="chat-main glass-effect">
                 <div id="no-chat-selected" class="empty-state">
                     <div class="illustration">🍷</div>
-                    <h2>Vinychat</h2>
-                    <p>Выберите чат или найдите друга в поиске</p>
+                    <h2>Vinychat V2</h2>
+                    <p>Ищи людей по нику или группы по названию</p>
                 </div>
 
                 <div id="active-chat" class="chat-container hidden">
@@ -94,54 +89,40 @@
                         <div class="chat-info">
                             <div class="avatar" id="active-chat-avatar"></div>
                             <div>
-                                <h3 id="active-chat-name">Имя</h3>
-                                <div id="active-chat-status" class="status">печатает...</div>
+                                <h3 id="active-chat-name">Чат</h3>
+                                <div id="active-chat-status" class="status">онлайн</div>
                             </div>
                         </div>
                         <div class="chat-actions">
-                            <button id="btn-voice-call" class="icon-btn" title="Голосовой звонок">�</button>
-                            <button class="icon-btn">⋮</button>
+                            <button id="btn-group-link" class="icon-btn" title="Ссылка на группу"
+                                style="font-size: 14px; background: rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 6px; display:none;">🔗
+                                Ссылка</button>
+                            <button id="btn-voice-call" class="icon-btn">📞</button>
                         </div>
                     </header>
 
                     <div class="messages-area" id="messages-area"></div>
-
-                    <!-- Hidden file input -->
-                    <input type="file" id="file-input" class="hidden" accept="image/*, .pdf, .doc, .docx, .zip">
+                    <input type="file" id="file-input" class="hidden">
 
                     <footer class="chat-input-area">
-                        <button class="icon-btn" id="btn-attachment" title="Прикрепить файл">📎</button>
-                        <div class="input-wrapper">
-                            <input type="text" id="message-input" placeholder="Сообщение...">
+                        <button class="icon-btn" id="btn-attachment">📎</button>
+                        <div class="input-wrapper"><input type="text" id="message-input" placeholder="Сообщение...">
                         </div>
-                        <button id="btn-voice-msg" class="icon-btn" title="Голосовое сообщение">🎤</button>
                         <button id="btn-send" class="send-btn">🚀</button>
                     </footer>
-                </div>
-
-                <!-- Voice Call Overlay -->
-                <div id="voice-overlay" class="voice-overlay hidden">
-                    <div class="glass-card voice-card">
-                        <div class="call-avatar" id="call-avatar"></div>
-                        <h2 id="call-target">Вызов...</h2>
-                        <div class="call-timer" id="call-timer">00:00</div>
-                        <div class="call-actions">
-                            <button id="btn-end-call" class="end-call-btn">✖</button>
-                        </div>
-                    </div>
                 </div>
             </main>
         </div>
     </div>
 
-    <!-- Modals -->
+    <!-- Modal: Settings & Groups -->
     <div id="modal-container" class="modal-overlay hidden">
         <div class="glass-card modal-content">
-            <h3 id="modal-title">Группа</h3>
+            <h3 id="modal-title">Настройки</h3>
             <div id="modal-body"></div>
             <div class="modal-actions">
-                <button id="modal-cancel" class="secondary-btn">Отмена</button>
-                <button id="modal-confirm" class="primary-btn">Создать</button>
+                <button id="modal-cancel" class="secondary-btn">Закрыть</button>
+                <button id="modal-confirm" class="primary-btn">Сохранить</button>
             </div>
         </div>
     </div>
