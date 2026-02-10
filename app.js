@@ -76,23 +76,20 @@ const micManager = new MicManager();
    ═══════════════════════════════════ */
 const ICE = {
     iceServers: [
-        // STUN (базовый поиск IP)
+        // Только IP-адреса для обхода DNS-блокировок
         { urls: "stun:142.250.31.127:19302" },
         { urls: "stun:1.1.1.1:3478" },
-
-        // TURN-TLS (Relay через 443 порт, маскировка под HTTPS)
-        // Это и есть «вшитый» обход блокировок
         {
             urls: [
                 "turns:167.172.138.156:443?transport=tcp",
-                "turns:openrelay.metered.ca:443?transport=tcp"
+                "turns:159.203.111.96:443?transport=tcp"
             ],
             username: "openrelayproject",
             credential: "openrelayproject"
         },
         {
             urls: [
-                "turns:relay.metered.ca:443?transport=tcp"
+                "turns:157.245.158.37:443?transport=tcp"
             ],
             username: "c38fb767c944d156540b6183",
             credential: "5X+7Zz8oO9pX/HNo"
@@ -102,6 +99,16 @@ const ICE = {
     iceTransportPolicy: 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require'
+};
+
+// Функция "вшитого" обхода: удаляем незащищенные маршруты
+const forceRelaySDP = (sdp) => {
+    return sdp.split('\r\n').filter(line => {
+        if (line.indexOf('a=candidate') === 0) {
+            return line.indexOf('relay') !== -1;
+        }
+        return true;
+    }).join('\r\n');
 };
 
 class GroupCall {
@@ -289,8 +296,16 @@ class GroupCall {
         pc.oniceconnectionstatechange = check;
 
         if (init) {
-            const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
-            await this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'offer', data: { sdp: offer.sdp, type: offer.type } });
+            // Небольшая задержка для инициатора, чтобы избежать ошибки "stable"
+            await new Promise(r => setTimeout(r, 500));
+            const offer = await pc.createOffer();
+            // Применяем "вшитый" обход (фильтруем SDP перед отправкой)
+            const mungedSDP = forceRelaySDP(offer.sdp);
+            await pc.setLocalDescription({ type: 'offer', sdp: mungedSDP });
+            await this.roomRef.collection('signals').add({
+                from: this.myUid, to: pid, type: 'offer',
+                data: { sdp: mungedSDP, type: offer.type }
+            });
         }
     }
 
@@ -311,10 +326,12 @@ class GroupCall {
                 }
                 await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
                 const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
+                // Применяем фильтр "вшитого" обхода к ответу
+                const mungedAnswer = forceRelaySDP(answer.sdp);
+                await pc.setLocalDescription({ type: 'answer', sdp: mungedAnswer });
                 await this.roomRef.collection('signals').add({
                     from: this.myUid, to: sig.from, type: 'answer',
-                    data: { sdp: answer.sdp, type: answer.type }
+                    data: { sdp: mungedAnswer, type: answer.type }
                 });
             } else if (sig.type === 'answer') {
                 if (pc.signalingState === 'have-local-offer') {
