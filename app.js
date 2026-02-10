@@ -269,7 +269,9 @@ class GroupCall {
 
     cleanup() {
         this.sounds.stopAll();
-        if (this.timerInterval) clearInterval(this.timerInterval); this.timerInterval = null;
+        if (this.timerInterval) clearInterval(this.timerInterval);
+        this.timerInterval = null;
+        this.seconds = 0;  // ← CRITICAL: reset timer so next call doesn't think it's already connected
         if (this.localStream) this.localStream.getTracks().forEach(t => t.stop());
         this.localStream = null;
         Object.keys(this.peers).forEach(id => this._removePeer(id));
