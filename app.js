@@ -1,6 +1,6 @@
 /**
- * Vinychat 4.2 — SOUND + MOBILE SUPPORT
- * Ringtones via Web Audio API, full mobile UX
+ * Vinychat 4.3 — GROUP CALLS (Mesh WebRTC)
+ * Multiple participants in one call via mesh peer connections
  */
 
 const firebaseConfig = {
@@ -16,200 +16,270 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 /* ═══════════════════════════════════
-   SOUND ENGINE (Web Audio API)
+   SOUND ENGINE
    ═══════════════════════════════════ */
 class CallSounds {
-    constructor() {
-        this.ctx = null;
-        this.activeNodes = [];
-        this.ringInterval = null;
-    }
-
+    constructor() { this.ctx = null; this.activeNodes = []; this.ringInterval = null; this.stopped = false; }
     _ensure() {
         if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
         if (this.ctx.state === 'suspended') this.ctx.resume();
     }
-
-    _beep(freq, duration, vol = 0.15) {
+    _beep(freq, dur, vol = 0.15) {
+        if (this.stopped) return;
         this._ensure();
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = freq;
-        gain.gain.value = vol;
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(this.ctx.currentTime + duration);
-        this.activeNodes.push(osc);
-        osc.onended = () => { this.activeNodes = this.activeNodes.filter(n => n !== osc); };
+        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+        o.type = 'sine'; o.frequency.value = freq; g.gain.value = vol;
+        o.connect(g); g.connect(this.ctx.destination);
+        o.start(); o.stop(this.ctx.currentTime + dur);
+        this.activeNodes.push(o);
+        o.onended = () => { this.activeNodes = this.activeNodes.filter(n => n !== o); };
     }
-
-    // Outgoing call: repeating double-beep
-    startDialing() {
-        this.stopAll();
-        const ring = () => { this._beep(440, 0.3, 0.12); setTimeout(() => this._beep(440, 0.3, 0.12), 400); };
-        ring();
-        this.ringInterval = setInterval(ring, 2500);
-    }
-
-    // Incoming call: higher pitch repeating triple-beep
-    startRinging() {
-        this.stopAll();
-        const ring = () => {
-            this._beep(587, 0.15, 0.18);
-            setTimeout(() => this._beep(659, 0.15, 0.18), 200);
-            setTimeout(() => this._beep(784, 0.2, 0.18), 400);
-        };
-        ring();
-        this.ringInterval = setInterval(ring, 2000);
-    }
-
-    // Connected: short pleasant chord
-    playConnected() {
-        this.stopAll();
-        this._beep(523, 0.15, 0.1);
-        setTimeout(() => this._beep(659, 0.15, 0.1), 100);
-        setTimeout(() => this._beep(784, 0.2, 0.1), 200);
-    }
-
-    // End call: descending tone
-    playHangup() {
-        this.stopAll();
-        this._beep(440, 0.15, 0.1);
-        setTimeout(() => this._beep(330, 0.15, 0.1), 150);
-        setTimeout(() => this._beep(262, 0.25, 0.1), 300);
-    }
-
-    // Message sent: subtle click
-    playMsgSent() {
-        this._ensure();
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = 800;
-        gain.gain.setValueAtTime(0.06, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08);
-        osc.connect(gain); gain.connect(this.ctx.destination);
-        osc.start(); osc.stop(this.ctx.currentTime + 0.08);
-    }
-
-    // Message received: two-tone notification
-    playMsgReceived() {
-        this._ensure();
-        this._beep(660, 0.08, 0.06);
-        setTimeout(() => this._beep(880, 0.1, 0.06), 80);
-    }
-
-    stopAll() {
-        if (this.ringInterval) { clearInterval(this.ringInterval); this.ringInterval = null; }
-        this.activeNodes.forEach(n => { try { n.stop(); } catch (e) { } });
-        this.activeNodes = [];
-    }
+    startDialing() { this.stopAll(); this.stopped = false; const r = () => { this._beep(440, 0.3, 0.12); setTimeout(() => this._beep(440, 0.3, 0.12), 400); }; r(); this.ringInterval = setInterval(r, 2500); }
+    startRinging() { this.stopAll(); this.stopped = false; const r = () => { this._beep(587, 0.15, 0.18); setTimeout(() => this._beep(659, 0.15, 0.18), 200); setTimeout(() => this._beep(784, 0.2, 0.18), 400); }; r(); this.ringInterval = setInterval(r, 2000); }
+    playConnected() { this.stopAll(); this.stopped = false; this._beep(523, 0.15, 0.1); setTimeout(() => this._beep(659, 0.15, 0.1), 100); setTimeout(() => this._beep(784, 0.2, 0.1), 200); }
+    playHangup() { this.stopAll(); this.stopped = false; this._beep(440, 0.15, 0.1); setTimeout(() => this._beep(330, 0.15, 0.1), 150); setTimeout(() => this._beep(262, 0.25, 0.1), 300); }
+    playJoin() { this.stopped = false; this._beep(700, 0.1, 0.08); setTimeout(() => this._beep(900, 0.12, 0.08), 120); }
+    playMsgSent() { this.stopped = false; this._ensure(); const o = this.ctx.createOscillator(), g = this.ctx.createGain(); o.type = 'sine'; o.frequency.value = 800; g.gain.setValueAtTime(0.06, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08); o.connect(g); g.connect(this.ctx.destination); o.start(); o.stop(this.ctx.currentTime + 0.08); }
+    playMsgReceived() { this.stopped = false; this._beep(660, 0.08, 0.06); setTimeout(() => this._beep(880, 0.1, 0.06), 80); }
+    stopAll() { this.stopped = true; if (this.ringInterval) { clearInterval(this.ringInterval); this.ringInterval = null; } this.activeNodes.forEach(n => { try { n.stop(); } catch (e) { } }); this.activeNodes = []; }
 }
 
 /* ═══════════════════════════════════
-   VOICE CALL ENGINE (WebRTC)
+   MICROPHONE MANAGER
    ═══════════════════════════════════ */
-class VoiceCall {
+class MicManager {
+    constructor() {
+        this.stream = null;
+        this.permitted = false;
+    }
+
+    async request() {
+        // Already have an active stream
+        if (this.stream && this.stream.active) return this.stream;
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Ваш браузер не поддерживает доступ к микрофону. Используйте Chrome или Safari.');
+        }
+
+        // Check if we're on HTTPS (required for getUserMedia)
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            throw new Error('Микрофон доступен только через HTTPS. Откройте сайт через защищённое соединение.');
+        }
+
+        try {
+            this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            this.permitted = true;
+            return this.stream;
+        } catch (e) {
+            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                throw new Error('Доступ к микрофону запрещён. Разрешите доступ в настройках браузера и перезагрузите страницу.');
+            } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+                throw new Error('Микрофон не найден. Подключите микрофон и попробуйте снова.');
+            } else {
+                throw new Error('Ошибка микрофона: ' + e.message);
+            }
+        }
+    }
+
+    release() {
+        if (this.stream) {
+            this.stream.getTracks().forEach(t => t.stop());
+            this.stream = null;
+        }
+    }
+
+    // Pre-authorize mic on user gesture (important for mobile!)
+    async preAuth() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            this.permitted = true;
+            // Stop immediately - we just needed the permission
+            stream.getTracks().forEach(t => t.stop());
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+}
+
+const micManager = new MicManager();
+
+/* ═══════════════════════════════════
+   GROUP VOICE CALL (Mesh WebRTC)
+   ═══════════════════════════════════ */
+const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] };
+
+class GroupCall {
     constructor(sounds) {
-        this.pc = null;
+        this.sounds = sounds;
         this.localStream = null;
-        this.callDoc = null;
-        this.unsubs = [];
+        this.peers = {};
+        this.audioElements = {};
+        this.roomRef = null;
+        this.signalUnsub = null;
+        this.roomUnsub = null;
         this.timerInterval = null;
         this.seconds = 0;
         this.muted = false;
-        this.sounds = sounds;
+        this.myUid = null;
+        this.activeChatId = null;
     }
 
-    async startCall(chatId, callerUid) {
+    async joinRoom(chatId, uid) {
         try {
-            this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            this.localStream = await micManager.request();
         } catch (e) {
-            alert("Нет доступа к микрофону. Разрешите в настройках браузера.");
+            alert(e.message);
             return false;
         }
+
+        this.myUid = uid;
+        this.activeChatId = chatId;
         this.muted = false;
         this.updateMuteUI();
 
-        this.pc = new RTCPeerConnection({
-            iceServers: [
-                { urls: "stun:stun.l.google.com:19302" },
-                { urls: "stun:stun1.l.google.com:19302" }
-            ]
+        // Find or create active room for this chat
+        const roomsSnap = await db.collection('chats').doc(chatId).collection('rooms')
+            .where('status', '==', 'active').limit(1).get();
+
+        if (!roomsSnap.empty) {
+            this.roomRef = roomsSnap.docs[0].ref;
+        } else {
+            this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
+                status: 'active',
+                participants: [],
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        }
+
+        // Add myself to participants
+        await this.roomRef.update({
+            participants: firebase.firestore.FieldValue.arrayUnion(uid)
         });
-        this.localStream.getTracks().forEach(t => this.pc.addTrack(t, this.localStream));
-        this.pc.ontrack = e => this._playRemote(e.streams[0]);
 
-        this.callDoc = db.collection('chats').doc(chatId).collection('calls').doc();
-        const offerC = this.callDoc.collection('offerCandidates');
-        const answerC = this.callDoc.collection('answerCandidates');
+        // Listen for participants joining/leaving
+        this.roomUnsub = this.roomRef.onSnapshot(snap => {
+            const data = snap.data();
+            if (!data) return;
+            const participants = data.participants || [];
 
-        this.pc.onicecandidate = e => { if (e.candidate) offerC.add(e.candidate.toJSON()); };
-
-        const offer = await this.pc.createOffer();
-        await this.pc.setLocalDescription(offer);
-        await this.callDoc.set({ offer: { sdp: offer.sdp, type: offer.type }, status: 'ringing', callerUid, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-
-        this.sounds.startDialing();
-
-        this.unsubs.push(this.callDoc.onSnapshot(snap => {
-            const d = snap.data(); if (!d) return;
-            if (d.answer && !this.pc.currentRemoteDescription) {
-                this.pc.setRemoteDescription(new RTCSessionDescription(d.answer));
-                this.sounds.playConnected();
-                this.onConnected();
+            // Create connections to new peers
+            for (const peerId of participants) {
+                if (peerId === this.myUid) continue;
+                if (!this.peers[peerId]) {
+                    // Someone joined — stop dialing/ringing sounds immediately
+                    this.sounds.stopAll();
+                    this._createPeer(peerId, true);
+                    this.updateParticipantCount(participants.length);
+                }
             }
-            if (d.status === 'ended') { this.sounds.playHangup(); this.cleanup(); }
-        }));
-        this.unsubs.push(answerC.onSnapshot(snap => {
-            snap.docChanges().forEach(c => { if (c.type === 'added' && this.pc) this.pc.addIceCandidate(new RTCIceCandidate(c.doc.data())); });
-        }));
+
+            // Remove connections for left peers
+            for (const peerId of Object.keys(this.peers)) {
+                if (!participants.includes(peerId)) {
+                    this._removePeer(peerId);
+                    this.updateParticipantCount(participants.length);
+                }
+            }
+
+            if (participants.length <= 1 && this.seconds > 0) {
+                // Everyone left
+                this.endCall();
+            }
+        });
+
+        // Listen for signaling messages directed at us
+        this.signalUnsub = this.roomRef.collection('signals')
+            .where('to', '==', uid)
+            .onSnapshot(snap => {
+                snap.docChanges().forEach(async change => {
+                    if (change.type !== 'added') return;
+                    const sig = change.doc.data();
+                    await this._handleSignal(sig);
+                    // Clean up processed signal
+                    change.doc.ref.delete().catch(() => { });
+                });
+            });
+
         return true;
     }
 
-    async answerCall(chatId, callId) {
-        try {
-            this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        } catch (e) { alert("Нет доступа к микрофону."); return; }
-        this.muted = false;
-        this.updateMuteUI();
+    async _createPeer(peerId, isInitiator) {
+        const pc = new RTCPeerConnection(ICE);
+        this.peers[peerId] = pc;
 
-        this.pc = new RTCPeerConnection({
-            iceServers: [
-                { urls: "stun:stun.l.google.com:19302" },
-                { urls: "stun:stun1.l.google.com:19302" }
-            ]
-        });
-        this.localStream.getTracks().forEach(t => this.pc.addTrack(t, this.localStream));
-        this.pc.ontrack = e => this._playRemote(e.streams[0]);
+        this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
 
-        this.callDoc = db.collection('chats').doc(chatId).collection('calls').doc(callId);
-        const answerC = this.callDoc.collection('answerCandidates');
-        const offerC = this.callDoc.collection('offerCandidates');
-        this.pc.onicecandidate = e => { if (e.candidate) answerC.add(e.candidate.toJSON()); };
+        pc.ontrack = e => {
+            let audio = this.audioElements[peerId];
+            if (!audio) {
+                audio = document.createElement('audio');
+                audio.autoplay = true;
+                audio.id = 'audio-' + peerId;
+                document.body.appendChild(audio);
+                this.audioElements[peerId] = audio;
+            }
+            audio.srcObject = e.streams[0];
+        };
 
-        const callData = (await this.callDoc.get()).data();
-        await this.pc.setRemoteDescription(new RTCSessionDescription(callData.offer));
-        const answer = await this.pc.createAnswer();
-        await this.pc.setLocalDescription(answer);
-        await this.callDoc.update({ answer: { sdp: answer.sdp, type: answer.type }, status: 'active' });
+        pc.onicecandidate = e => {
+            if (e.candidate) {
+                this.roomRef.collection('signals').add({
+                    from: this.myUid, to: peerId,
+                    type: 'candidate', data: e.candidate.toJSON()
+                });
+            }
+        };
 
-        this.unsubs.push(offerC.onSnapshot(snap => {
-            snap.docChanges().forEach(c => { if (c.type === 'added' && this.pc) this.pc.addIceCandidate(new RTCIceCandidate(c.doc.data())); });
-        }));
-        this.unsubs.push(this.callDoc.onSnapshot(snap => { if (snap.data()?.status === 'ended') { this.sounds.playHangup(); this.cleanup(); } }));
+        const checkConnected = () => {
+            const s = pc.connectionState || pc.iceConnectionState;
+            if ((s === 'connected' || s === 'completed') && !this.timerInterval) {
+                this.sounds.stopAll();
+                this.sounds.playConnected();
+                this.onConnected();
+            }
+        };
+        pc.onconnectionstatechange = checkConnected;
+        pc.oniceconnectionstatechange = checkConnected;
 
-        this.sounds.playConnected();
-        this.onConnected();
+        if (isInitiator) {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await this.roomRef.collection('signals').add({
+                from: this.myUid, to: peerId,
+                type: 'offer', data: { sdp: offer.sdp, type: offer.type }
+            });
+        }
     }
 
-    _playRemote(stream) {
-        let audio = document.getElementById('remote-audio');
-        if (!audio) { audio = document.createElement('audio'); audio.id = 'remote-audio'; document.body.appendChild(audio); }
-        audio.autoplay = true;
-        audio.srcObject = stream;
+    async _handleSignal(sig) {
+        if (sig.type === 'offer') {
+            if (!this.peers[sig.from]) {
+                await this._createPeer(sig.from, false);
+            }
+            const pc = this.peers[sig.from];
+            if (!pc) return;
+            await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await this.roomRef.collection('signals').add({
+                from: this.myUid, to: sig.from,
+                type: 'answer', data: { sdp: answer.sdp, type: answer.type }
+            });
+        } else if (sig.type === 'answer') {
+            const pc = this.peers[sig.from];
+            if (pc && !pc.currentRemoteDescription) {
+                await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
+            }
+        } else if (sig.type === 'candidate') {
+            const pc = this.peers[sig.from];
+            if (pc) await pc.addIceCandidate(new RTCIceCandidate(sig.data));
+        }
+    }
+
+    _removePeer(peerId) {
+        if (this.peers[peerId]) { this.peers[peerId].close(); delete this.peers[peerId]; }
+        if (this.audioElements[peerId]) { this.audioElements[peerId].remove(); delete this.audioElements[peerId]; }
     }
 
     toggleMute() {
@@ -226,10 +296,18 @@ class VoiceCall {
         btn.classList.toggle('muted', this.muted);
     }
 
+    updateParticipantCount(count) {
+        const el = document.getElementById('call-status');
+        if (el && this.timerInterval) {
+            el.innerText = `Участников: ${count}`;
+        }
+    }
+
     onConnected() {
         document.getElementById('call-status').innerText = 'Подключено';
         document.getElementById('call-timer').classList.remove('hidden');
         this.seconds = 0;
+        if (this.timerInterval) clearInterval(this.timerInterval);
         this.timerInterval = setInterval(() => {
             this.seconds++;
             document.getElementById('call-timer').innerText =
@@ -239,21 +317,34 @@ class VoiceCall {
 
     async endCall() {
         this.sounds.playHangup();
-        if (this.callDoc) await this.callDoc.update({ status: 'ended' }).catch(() => { });
+        // Remove ourselves from participants
+        if (this.roomRef && this.myUid) {
+            await this.roomRef.update({
+                participants: firebase.firestore.FieldValue.arrayRemove(this.myUid)
+            }).catch(() => { });
+        }
         this.cleanup();
     }
 
     cleanup() {
         this.sounds.stopAll();
         if (this.timerInterval) clearInterval(this.timerInterval);
-        if (this.localStream) this.localStream.getTracks().forEach(t => t.stop());
-        if (this.pc) this.pc.close();
-        this.unsubs.forEach(u => u());
-        this.unsubs = [];
-        this.pc = null; this.localStream = null;
-        const ra = document.getElementById('remote-audio'); if (ra) ra.remove();
+        this.timerInterval = null;
+        micManager.release();
+        this.localStream = null;
+        Object.keys(this.peers).forEach(id => this._removePeer(id));
+        if (this.signalUnsub) this.signalUnsub();
+        if (this.roomUnsub) this.roomUnsub();
+        this.signalUnsub = null;
+        this.roomUnsub = null;
+        this.localStream = null;
+        this.roomRef = null;
+        this.myUid = null;
+        this.activeChatId = null;
         document.getElementById('call-overlay').classList.add('hidden');
     }
+
+    get isActive() { return !!this.roomRef; }
 }
 
 /* ═══════════════════════════════════
@@ -267,14 +358,35 @@ class Vinychat {
         this.cache = {};
         this.unsub = null;
         this.sounds = new CallSounds();
-        this.voice = new VoiceCall(this.sounds);
+        this.voice = new GroupCall(this.sounds);
         this.globalCallUnsubs = [];
         this.pendingCall = null;
         this.isMobile = window.innerWidth <= 768;
         this.msgCount = 0;
+        this.micPreAuthed = false;
         this.bind();
         this.listen();
+        this._setupMobileAudio();
         window.addEventListener('resize', () => { this.isMobile = window.innerWidth <= 768; });
+    }
+
+    // Pre-request mic permission on first user interaction (critical for mobile!)
+    _setupMobileAudio() {
+        const handler = async () => {
+            // Resume AudioContext on user gesture (iOS requirement)
+            if (this.sounds.ctx && this.sounds.ctx.state === 'suspended') {
+                this.sounds.ctx.resume();
+            }
+            // Pre-authorize mic
+            if (!this.micPreAuthed) {
+                this.micPreAuthed = true;
+                await micManager.preAuth();
+            }
+            document.removeEventListener('touchstart', handler);
+            document.removeEventListener('click', handler);
+        };
+        document.addEventListener('touchstart', handler, { once: true });
+        document.addEventListener('click', handler, { once: true });
     }
 
     bind() {
@@ -311,15 +423,12 @@ class Vinychat {
         document.getElementById(name + '-screen').classList.add('active');
     }
 
-    // Mobile: toggle sidebar / chat
     showSidebar() {
         document.getElementById('sidebar').classList.remove('sidebar-hidden');
         document.getElementById('active-chat').classList.add('hidden');
         document.getElementById('no-chat-selected').style.display = 'none';
     }
-    hideSidebar() {
-        if (this.isMobile) document.getElementById('sidebar').classList.add('sidebar-hidden');
-    }
+    hideSidebar() { if (this.isMobile) document.getElementById('sidebar').classList.add('sidebar-hidden'); }
 
     async sync() {
         const doc = await db.collection('users').doc(this.user.uid).get();
@@ -355,19 +464,26 @@ class Vinychat {
         this.globalCallUnsubs.forEach(fn => fn());
         this.globalCallUnsubs = [];
         for (const chat of this.chats) {
-            const unsub = db.collection('chats').doc(chat.id).collection('calls')
-                .where('status', '==', 'ringing')
+            const unsub = db.collection('chats').doc(chat.id).collection('rooms')
+                .where('status', '==', 'active')
                 .onSnapshot(snap => {
                     snap.docChanges().forEach(async change => {
                         if (change.type !== 'added') return;
                         const data = change.doc.data();
-                        if (data.callerUid === this.user.uid) return;
-                        if (this.voice.pc) return;
+                        const participants = data.participants || [];
 
-                        let callerName = 'Неизвестно';
-                        if (data.callerUid) { const u = await this.getUser(data.callerUid); if (u) callerName = u.username; }
+                        // Skip if we're already in this room or any call
+                        if (participants.includes(this.user.uid)) return;
+                        if (this.voice.isActive) return;
 
-                        this.pendingCall = { chatId: chat.id, callId: change.doc.id, chat };
+                        // Someone started a call — notify us
+                        let callerName = 'Звонок';
+                        if (participants.length > 0) {
+                            const u = await this.getUser(participants[0]);
+                            if (u) callerName = u.username;
+                        }
+
+                        this.pendingCall = { chatId: chat.id, chat };
                         this.showIncomingBanner(callerName);
                     });
                 });
@@ -385,7 +501,7 @@ class Vinychat {
         document.getElementById('incoming-call').classList.add('hidden');
         this.sounds.stopAll();
         if (!this.pendingCall) return;
-        const { chatId, callId, chat } = this.pendingCall;
+        const { chatId, chat } = this.pendingCall;
         this.pendingCall = null;
 
         let name = chat.name || 'Группа', av = '👥';
@@ -396,14 +512,14 @@ class Vinychat {
         document.getElementById('call-status').innerText = 'Подключение...';
         document.getElementById('call-timer').classList.add('hidden');
         document.getElementById('call-overlay').classList.remove('hidden');
-        await this.voice.answerCall(chatId, callId);
+
+        const ok = await this.voice.joinRoom(chatId, this.user.uid);
+        if (!ok) document.getElementById('call-overlay').classList.add('hidden');
     }
 
     async declineIncoming() {
         document.getElementById('incoming-call').classList.add('hidden');
         this.sounds.stopAll();
-        if (!this.pendingCall) return;
-        await db.collection('chats').doc(this.pendingCall.chatId).collection('calls').doc(this.pendingCall.callId).update({ status: 'ended' });
         this.pendingCall = null;
     }
 
@@ -454,9 +570,8 @@ class Vinychat {
     async renderMsgs(docs, chatData) {
         const area = document.getElementById('messages-area');
         area.innerHTML = '';
-        const prevCount = this.msgCount;
+        const prev = this.msgCount;
         this.msgCount = docs.length;
-
         for (const d of docs) {
             const m = d.data(), mine = m.senderId === this.user.uid;
             let author = '';
@@ -472,9 +587,7 @@ class Vinychat {
             area.appendChild(div);
         }
         area.scrollTop = area.scrollHeight;
-
-        // Play notification sound for new incoming messages
-        if (prevCount > 0 && docs.length > prevCount) {
+        if (prev > 0 && docs.length > prev) {
             const last = docs[docs.length - 1].data();
             if (last.senderId !== this.user.uid && last.senderId !== 'system') this.sounds.playMsgReceived();
         }
@@ -490,21 +603,24 @@ class Vinychat {
         await db.collection('chats').doc(this.chatId).update({ lastMessage: { text: t }, lastActivity: firebase.firestore.FieldValue.serverTimestamp() });
     }
 
-    /* ── VOICE CALLS ─────────────── */
+    /* ── CALLS ───────────────────── */
     async initiateCall() {
         if (!this.chatId) return;
-        if (this.voice.pc) { alert('Вы уже в звонке'); return; }
+        if (this.voice.isActive) { alert('Вы уже в звонке'); return; }
         const name = document.getElementById('active-chat-name').innerText;
         document.getElementById('call-name').innerText = name;
-        document.getElementById('call-status').innerText = 'Вызов...';
+        document.getElementById('call-status').innerText = 'Ожидание...';
         document.getElementById('call-timer').classList.add('hidden');
         document.getElementById('call-overlay').classList.remove('hidden');
-        const ok = await this.voice.startCall(this.chatId, this.user.uid);
-        if (!ok) { document.getElementById('call-overlay').classList.add('hidden'); return; }
+
+        this.sounds.startDialing();
+        const ok = await this.voice.joinRoom(this.chatId, this.user.uid);
+        if (!ok) { document.getElementById('call-overlay').classList.add('hidden'); this.sounds.stopAll(); return; }
+
         await db.collection('chats').doc(this.chatId).collection('messages').add({ senderId: 'system', text: '📞 Начат голосовой вызов', type: 'system', timestamp: firebase.firestore.FieldValue.serverTimestamp() });
     }
 
-    /* ── MODALS ───────────────────── */
+    /* ── MODALS ─────────────────── */
     async userAction(uid) {
         if (uid === this.user.uid || uid === 'system') return;
         const u = await this.getUser(uid);
@@ -518,7 +634,7 @@ class Vinychat {
         const u = await this.getUser(this.user.uid);
         const link = `${location.origin}${location.pathname}?user=${this.user.uid}`;
         document.getElementById('modal-title').innerText = 'Профиль';
-        document.getElementById('modal-body').innerHTML = `<label style="font-size:12px;color:var(--dim)">Никнейм</label><input id="edit-name" value="${u?.username || ''}"><label style="font-size:12px;color:var(--dim)">Ссылка на ваш профиль</label><button class="primary-btn" style="width:100%" onclick="navigator.clipboard.writeText('${link}');alert('Скопировано!')">Скопировать ссылку</button>`;
+        document.getElementById('modal-body').innerHTML = `<label style="font-size:12px;color:var(--dim)">Никнейм</label><input id="edit-name" value="${u?.username || ''}"><label style="font-size:12px;color:var(--dim)">Ссылка на профиль</label><button class="primary-btn" style="width:100%" onclick="navigator.clipboard.writeText('${link}');alert('Скопировано!')">Скопировать ссылку</button>`;
         document.getElementById('modal-ok').onclick = () => {
             const n = document.getElementById('edit-name').value.trim();
             if (n && n !== u?.username) db.collection('users').doc(this.user.uid).update({ username: n, avatar: n[0].toUpperCase() }).then(() => location.reload());
@@ -537,12 +653,7 @@ class Vinychat {
     }
 
     async leave(id) { if (confirm('Покинуть группу?')) { await db.collection('chats').doc(id).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.user.uid) }); location.reload(); } }
-
-    createGroup() {
-        const n = prompt('Имя группы:');
-        if (n) db.collection('chats').add({ name: n, type: 'group', participants: [this.user.uid], createdAt: firebase.firestore.FieldValue.serverTimestamp(), lastMessage: { text: 'Группа создана' } });
-    }
-
+    createGroup() { const n = prompt('Имя группы:'); if (n) db.collection('chats').add({ name: n, type: 'group', participants: [this.user.uid], createdAt: firebase.firestore.FieldValue.serverTimestamp(), lastMessage: { text: 'Группа создана' } }); }
     esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 }
 
