@@ -1,8 +1,9 @@
 /**
- * Vinychat 5.1 — CALL FIX + DELETE CHATS
- * - Only notify for recent rooms (< 30s old)
- * - Auto-end stale rooms
- * - Delete/close chats
+ * Vinychat 5.2 — CALL FIX v2
+ * - Fixed: call notifications now work reliably
+ * - Fixed: proper initial/subsequent snapshot handling
+ * - Personal = 1:1, Group = all members
+ * - Delete chats, video calls
  */
 
 const firebaseConfig = {
@@ -57,8 +58,7 @@ class MicManager {
             throw new Error('Нужен HTTPS.');
         try {
             const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
-            this.permitted = true;
-            return s;
+            this.permitted = true; return s;
         } catch (e) {
             if (e.name === 'NotAllowedError') throw new Error('Доступ запрещён. Разрешите в настройках браузера.');
             if (e.name === 'NotFoundError') throw new Error('Устройство не найдено.');
@@ -112,6 +112,7 @@ class GroupCall {
             document.getElementById('call-overlay').classList.add('video-active');
         }
 
+        // Find or create room
         const snap = await db.collection('chats').doc(chatId).collection('rooms')
             .where('status', '==', 'active').limit(1).get();
 
@@ -124,6 +125,7 @@ class GroupCall {
 
         await this.roomRef.update({ participants: firebase.firestore.FieldValue.arrayUnion(uid) });
 
+        // Watch participants
         this.roomUnsub = this.roomRef.onSnapshot(snap => {
             const data = snap.data();
             if (!data || data.status === 'ended') { this.cleanup(); return; }
@@ -141,6 +143,7 @@ class GroupCall {
             if (parts.length <= 1 && this.seconds > 0) this.endCall();
         });
 
+        // Listen for signals to me
         this.signalUnsub = this.roomRef.collection('signals').where('to', '==', uid)
             .onSnapshot(snap => {
                 snap.docChanges().forEach(async ch => {
@@ -165,7 +168,7 @@ class GroupCall {
                 document.getElementById('call-overlay').classList.add('video-active');
             } else {
                 let a = this.audioElements[pid];
-                if (!a) { a = document.createElement('audio'); a.autoplay = true; a.id = 'audio-' + pid; document.body.appendChild(a); this.audioElements[pid] = a; }
+                if (!a) { a = document.createElement('audio'); a.autoplay = true; document.body.appendChild(a); this.audioElements[pid] = a; }
                 a.srcObject = e.streams[0];
             }
         };
@@ -230,7 +233,7 @@ class GroupCall {
     async endCall() {
         this.sounds.playHangup();
         if (this.roomRef) {
-            // Always mark room as ended + remove self
+            // ALWAYS mark room as ended so other participants see it
             await this.roomRef.update({
                 participants: firebase.firestore.FieldValue.arrayRemove(this.myUid),
                 status: 'ended'
@@ -249,8 +252,8 @@ class GroupCall {
         if (this.roomUnsub) this.roomUnsub();
         this.signalUnsub = null; this.roomUnsub = null; this.roomRef = null; this.myUid = null;
         const rv = document.getElementById('remote-video'), lv = document.getElementById('local-video');
-        rv.srcObject = null; rv.classList.add('hidden');
-        lv.srcObject = null; lv.classList.add('hidden');
+        if (rv) { rv.srcObject = null; rv.classList.add('hidden'); }
+        if (lv) { lv.srcObject = null; lv.classList.add('hidden'); }
         document.getElementById('btn-call-cam').classList.add('hidden');
         document.getElementById('call-overlay').classList.remove('video-active');
         document.getElementById('call-overlay').classList.add('hidden');
@@ -274,10 +277,10 @@ class Vinychat {
         this.globalCallUnsubs = [];
         this.pendingCall = null;
         this.pendingCallUnsub = null;
-        this.seenRoomIds = new Set();       // track already-seen rooms
         this.isMobile = window.innerWidth <= 768;
         this.msgCount = 0;
-        this.appStartTime = Date.now();     // ignore rooms created before app load
+        this._listeningChatIds = new Set();  // chats we already have listeners for
+        this._notifiedRoomIds = new Set();   // rooms we already showed notification for
         this.bind();
         this.listen();
         this._setupMobile();
@@ -323,12 +326,13 @@ class Vinychat {
         auth.onAuthStateChanged(u => {
             if (u) {
                 this.user = u;
-                this.appStartTime = Date.now();
-                this.seenRoomIds.clear();
+                this._listeningChatIds.clear();
+                this._notifiedRoomIds.clear();
                 this.show('chat'); this.sync(); this.loadChats(); this.checkInvite();
             } else {
                 this.user = null;
                 this.globalCallUnsubs.forEach(fn => fn()); this.globalCallUnsubs = [];
+                this._listeningChatIds.clear();
                 this.show('auth');
             }
         });
@@ -363,19 +367,38 @@ class Vinychat {
         db.collection('chats').where('participants', 'array-contains', this.user.uid).onSnapshot(snap => {
             this.chats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             this.renderList();
-            this.setupGlobalCallListeners();
+            // Don't tear down all listeners — only add new ones
+            this.updateCallListeners();
         });
     }
 
-    /* ── GLOBAL CALL LISTENER (FIXED) ── */
-    setupGlobalCallListeners() {
-        this.globalCallUnsubs.forEach(fn => fn());
-        this.globalCallUnsubs = [];
+    /* ── CALL LISTENERS (INCREMENTAL) ── */
+    updateCallListeners() {
+        const currentChatIds = new Set(this.chats.map(c => c.id));
 
+        // Remove listeners for chats we're no longer in
+        this.globalCallUnsubs = this.globalCallUnsubs.filter(item => {
+            if (!currentChatIds.has(item.chatId)) {
+                item.unsub();
+                this._listeningChatIds.delete(item.chatId);
+                return false;
+            }
+            return true;
+        });
+
+        // Add listeners for new chats only
         for (const chat of this.chats) {
+            if (this._listeningChatIds.has(chat.id)) continue;
+            this._listeningChatIds.add(chat.id);
+
+            let isFirstSnapshot = true;
+
             const unsub = db.collection('chats').doc(chat.id).collection('rooms')
                 .where('status', '==', 'active')
                 .onSnapshot(snap => {
+                    const firstLoad = isFirstSnapshot;
+                    isFirstSnapshot = false;
+
                     snap.docChanges().forEach(async change => {
                         if (change.type !== 'added') return;
 
@@ -383,25 +406,36 @@ class Vinychat {
                         const data = change.doc.data();
                         const parts = data.participants || [];
 
-                        // Skip if already seen this room
-                        if (this.seenRoomIds.has(roomId)) return;
-                        this.seenRoomIds.add(roomId);
+                        // Already notified for this room
+                        if (this._notifiedRoomIds.has(roomId)) return;
 
-                        // Skip if we're already in this room
-                        if (parts.includes(this.user.uid)) return;
-                        // Skip if already in a call
-                        if (this.voice.isActive) return;
-                        // Skip if no participants (stale room)
-                        if (parts.length === 0) return;
-
-                        // Skip old rooms (created before app loaded)
-                        const created = data.createdAt?.toDate?.();
-                        if (created && created.getTime() < this.appStartTime - 5000) {
-                            // Auto-clean stale room
-                            change.doc.ref.update({ status: 'ended' }).catch(() => { });
+                        // I'm already in this room
+                        if (parts.includes(this.user.uid)) {
+                            this._notifiedRoomIds.add(roomId);
                             return;
                         }
 
+                        // Already in another call
+                        if (this.voice.isActive) return;
+
+                        // No participants (stale)
+                        if (parts.length === 0) return;
+
+                        // On first snapshot (app just loaded), only show if room is recent
+                        if (firstLoad) {
+                            const created = data.createdAt?.toDate?.();
+                            // If createdAt is null (server timestamp pending), it's definitely from another client = show it
+                            // If createdAt exists and is older than 60 seconds, ignore and clean up
+                            if (created && (Date.now() - created.getTime() > 60000)) {
+                                change.doc.ref.update({ status: 'ended' }).catch(() => { });
+                                this._notifiedRoomIds.add(roomId);
+                                return;
+                            }
+                        }
+
+                        this._notifiedRoomIds.add(roomId);
+
+                        // Get caller info
                         let callerName = 'Звонок';
                         const u = await this.getUser(parts[0]);
                         if (u) callerName = u.username;
@@ -409,7 +443,7 @@ class Vinychat {
                         const isVideo = data.withVideo || false;
                         this.pendingCall = { chatId: chat.id, chat, roomRef: change.doc.ref, isVideo };
 
-                        // Watch for cancellation
+                        // Watch for cancellation (caller hangs up before we answer)
                         if (this.pendingCallUnsub) this.pendingCallUnsub();
                         this.pendingCallUnsub = change.doc.ref.onSnapshot(rs => {
                             const rd = rs.data();
@@ -421,7 +455,8 @@ class Vinychat {
                         this.showIncomingBanner(callerName, isVideo);
                     });
                 });
-            this.globalCallUnsubs.push(unsub);
+
+            this.globalCallUnsubs.push({ chatId: chat.id, unsub });
         }
     }
 
@@ -568,22 +603,13 @@ class Vinychat {
     async deleteChat(chatId, type) {
         const label = type === 'group' ? 'Покинуть группу?' : 'Удалить чат?';
         if (!confirm(label)) return;
-
-        // If this is the currently open chat, close it
         if (this.chatId === chatId) {
             if (this.unsub) this.unsub();
             this.chatId = null;
             document.getElementById('active-chat').classList.add('hidden');
             document.getElementById('no-chat-selected').classList.remove('hidden');
         }
-
-        if (type === 'group') {
-            // Leave group
-            await db.collection('chats').doc(chatId).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.user.uid) });
-        } else {
-            // Personal chat: remove self from participants
-            await db.collection('chats').doc(chatId).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.user.uid) });
-        }
+        await db.collection('chats').doc(chatId).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.user.uid) });
     }
 
     /* ── MODALS ─────────────────── */
