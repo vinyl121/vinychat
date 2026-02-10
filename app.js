@@ -1,6 +1,6 @@
 /**
- * Vinychat Engine 3.4 - GROUP INVITE UPDATE
- * Added invite links, explicit settings button, and UI polish
+ * Vinychat Engine 3.5 - THE POLISH UPDATE
+ * Fixed Author names, Robust Search, and Image Error Handling
  */
 
 const firebaseConfig = {
@@ -31,7 +31,6 @@ class Vinychat {
         this.initElements();
         this.initEvents();
         this.listenAuth();
-        this.checkInviteLink();
     }
 
     initElements() {
@@ -55,7 +54,7 @@ class Vinychat {
         document.getElementById('btn-send').onclick = () => this.sendMessage();
 
         document.getElementById('btn-chat-settings').onclick = () => this.showChatManagement();
-        document.getElementById('btn-voice-call').onclick = () => alert("Вызываю... Функция звонков в разработке.");
+        document.getElementById('btn-voice-call').onclick = () => this.startCall();
 
         this.inputs.msg.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); this.sendMessage(); } };
         this.inputs.search.oninput = (e) => this.handleSearch(e.target.value);
@@ -69,17 +68,14 @@ class Vinychat {
     }
 
     listenAuth() {
-        auth.getRedirectResult().catch(err => {
-            if (err.code !== 'auth/cancelled-popup-request') alert("Google Error: " + err.message);
-        });
-
+        auth.getRedirectResult().catch(err => console.error(err));
         auth.onAuthStateChanged(user => {
             if (user) {
                 this.currentUser = user;
                 this.switchScreen('chat');
-                this.syncUser(user);
+                this.syncUser();
                 this.loadChats();
-                this.checkInviteLink(); // Проверяем приглашение после входа
+                this.checkInviteLink();
             } else {
                 this.switchScreen('auth');
             }
@@ -87,27 +83,20 @@ class Vinychat {
     }
 
     async checkInviteLink() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const inviteId = urlParams.get('join');
-        if (inviteId && this.currentUser) {
-            const doc = await db.collection('chats').doc(inviteId).get();
-            if (doc.exists) {
-                await this.joinGroup({ id: inviteId, ...doc.data() });
-                window.history.replaceState({}, document.title, window.location.pathname); // Чистим URL
-            }
+        const id = new URLSearchParams(window.location.search).get('join');
+        if (id && this.currentUser) {
+            await db.collection('chats').doc(id).update({ participants: firebase.firestore.FieldValue.arrayUnion(this.currentUser.uid) });
+            window.history.replaceState({}, '', window.location.pathname);
         }
     }
 
-    async syncUser(user) {
-        try {
-            const doc = await db.collection('users').doc(user.uid).get();
-            let name = doc.exists ? (doc.data().username || "User") : (user.displayName || user.email.split('@')[0]);
-            await db.collection('users').doc(user.uid).set({
-                uid: user.uid, username: name, avatar: name[0].toUpperCase(), searchKeywords: name.toLowerCase()
-            }, { merge: true });
-            document.getElementById('current-username').innerText = name;
-            document.getElementById('current-user-avatar').innerText = name[0].toUpperCase();
-        } catch (e) { console.error(e); }
+    async syncUser() {
+        const u = this.currentUser;
+        const doc = await db.collection('users').doc(u.uid).get();
+        let name = doc.exists ? doc.data().username : (u.displayName || u.email.split('@')[0]);
+        await db.collection('users').doc(u.uid).set({ uid: u.uid, username: name, avatar: name[0].toUpperCase(), searchKeywords: name.toLowerCase() }, { merge: true });
+        document.getElementById('current-username').innerText = name;
+        document.getElementById('current-user-avatar').innerText = name[0].toUpperCase();
     }
 
     async handleGoogleLogin() {
@@ -115,7 +104,7 @@ class Vinychat {
     }
 
     async handleLogin() {
-        try { await auth.signInWithEmailAndPassword(document.getElementById('login-email').value, document.getElementById('login-password').value); } catch (err) { alert(err.message); }
+        try { await auth.signInWithEmailAndPassword(document.getElementById('login-email').value, document.getElementById('login-password').value); } catch (e) { alert(e.message); }
     }
 
     async handleRegister() {
@@ -131,9 +120,18 @@ class Vinychat {
     async handleSearch(term) {
         term = term.toLowerCase().trim();
         if (term.length < 2) return this.renderChatList();
-        const uSnap = await db.collection('users').where('searchKeywords', '>=', term).where('searchKeywords', '<=', term + '\uf8ff').limit(10).get();
-        const gSnap = await db.collection('chats').where('type', '==', 'group').where('searchKeywords', '>=', term).where('searchKeywords', '<=', term + '\uf8ff').limit(10).get();
-        this.renderChatList(uSnap.docs.map(d => d.data()).filter(u => u.uid !== this.currentUser.uid), gSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+
+        try {
+            const uSnap = await db.collection('users').where('searchKeywords', '>=', term).where('searchKeywords', '<=', term + '\uf8ff').limit(5).get();
+            const gSnap = await db.collection('chats').where('type', '==', 'group').where('searchKeywords', '>=', term).where('searchKeywords', '<=', term + '\uf8ff').limit(5).get();
+            this.renderChatList(uSnap.docs.map(d => d.data()).filter(u => u.uid !== this.currentUser.uid), gSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        } catch (e) {
+            console.warn("Falling back to basic ID search");
+            if (term.length > 10) {
+                const doc = await db.collection('chats').doc(term).get();
+                if (doc.exists) this.renderChatList([], [{ id: doc.id, ...doc.data() }]);
+            }
+        }
     }
 
     loadChats() {
@@ -146,10 +144,10 @@ class Vinychat {
     async renderChatList(users = [], groups = []) {
         this.areas.chatList.innerHTML = '';
         if (users.length > 0 || groups.length > 0) {
-            const h = document.createElement('div'); h.className = 'status'; h.style.padding = '10px'; h.innerText = 'Поиск...';
+            const h = document.createElement('div'); h.className = 'status'; h.style.padding = '10px'; h.innerText = 'Найдено:';
             this.areas.chatList.appendChild(h);
-            users.forEach(u => this.appendItem(u.username, u.avatar, 'Написать', () => this.startChat(u)));
-            groups.forEach(g => this.appendItem(g.name, '👥', 'Вступить', () => this.joinGroup(g)));
+            users.forEach(u => this.appendItem(u.username, u.avatar, 'Люди: Чат', () => this.startChat(u)));
+            groups.forEach(g => this.appendItem(g.name, '👥', 'Группы: Зайти', () => this.joinGroup(g)));
             this.areas.chatList.appendChild(document.createElement('hr'));
         }
         for (const chat of this.allChats) {
@@ -157,10 +155,10 @@ class Vinychat {
             let av = "👥";
             if (chat.type === "personal") {
                 const other = await this.getUser(chat.participants.find(id => id !== this.currentUser.uid));
-                name = other ? other.username : "Загрузка...";
+                name = other ? other.username : "Юзер";
                 av = other ? other.avatar : "?";
             }
-            this.appendItem(name, av, chat.lastMessage?.text || "Нет сообщений", () => this.openChat(chat.id, { ...chat, name, avatar: av }), this.activeChatId === chat.id);
+            this.appendItem(name, av, chat.lastMessage?.text || "...", () => this.openChat(chat.id, { ...chat, name, avatar: av }), this.activeChatId === chat.id);
         }
     }
 
@@ -182,7 +180,7 @@ class Vinychat {
     async startChat(other) {
         const exist = this.allChats.find(c => c.type === 'personal' && c.participants.includes(other.uid));
         if (exist) return this.openChat(exist.id, { ...exist, name: other.username, avatar: other.avatar });
-        const ref = await db.collection('chats').add({ type: 'personal', participants: [this.currentUser.uid, other.uid], lastMessage: { text: "Чат создан" }, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+        const ref = await db.collection('chats').add({ type: 'personal', participants: [this.currentUser.uid, other.uid], lastMessage: { text: "Чат начат" }, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
         this.openChat(ref.id, { name: other.username, avatar: other.avatar });
     }
 
@@ -209,15 +207,24 @@ class Vinychat {
         for (const d of docs) {
             const m = d.data();
             const mine = m.senderId === this.currentUser.uid;
+
+            // ЛОГИКА ИМЕН В ГРУППАХ
+            let authorName = "";
+            if (!mine && chatData.type === 'group') {
+                const user = await this.getUser(m.senderId);
+                authorName = `<span class="msg-author" style="font-size:10px; color:var(--primary); font-weight:700; display:block; margin-bottom:4px; opacity:0.8;">${user ? user.username : '...'}</span>`;
+            }
+
             let content = `<div class="msg-text">${this.escape(m.text || "")}</div>`;
             if (m.fileUrl) {
-                if (m.fileType?.startsWith('image/')) content = `<img src="${m.fileUrl}" class="photo-attachment" style="max-width:250px; border-radius:10px; cursor:pointer;" onclick="window.open('${m.fileUrl}')">`;
+                if (m.fileType?.startsWith('image/')) content = `<img src="${m.fileUrl}" class="photo-attachment" style="max-width:260px; border-radius:12px; margin-top:5px; border:1px solid rgba(255,255,255,0.1);" onclick="window.open('${m.fileUrl}')">`;
                 else content = `<a href="${m.fileUrl}" target="_blank" class="file-attachment">📄 ${m.fileName || 'Файл'}</a>`;
             }
+
             const div = document.createElement('div');
-            div.className = `message ${mine ? 'mine' : 'other'}`;
+            div.className = `message ${mine ? 'mine' : 'other'} ${m.type || ''}`;
             const time = m.timestamp ? new Date(m.timestamp.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '...';
-            div.innerHTML = `${content}<div class="msg-meta" style="font-size:9px; opacity:0.6; text-align:right;">${time}</div>`;
+            div.innerHTML = `${authorName}${content}<div class="msg-meta" style="font-size:9px; opacity:0.5; text-align:right; margin-top:4px;">${time}</div>`;
             this.areas.messages.appendChild(div);
         }
         this.areas.messages.scrollTop = this.areas.messages.scrollHeight;
@@ -238,44 +245,39 @@ class Vinychat {
             const snap = await ref.put(file);
             const url = await snap.ref.getDownloadURL();
             await db.collection('chats').doc(this.activeChatId).collection('messages').add({ senderId: this.currentUser.uid, fileUrl: url, fileName: file.name, fileType: file.type, timestamp: firebase.firestore.FieldValue.serverTimestamp() });
-        } catch (e) { alert("CORS Error: Скорее всего, облачное хранилище не разрешает загрузку. Настройте правила CORS.\n" + e.message); }
+        } catch (e) { alert("Ошибка загрузки! Выполни команду gsutil в терминале Google для решения проблемы.\n" + e.message); }
+    }
+
+    async startCall() {
+        if (!this.activeChatId) return;
+        await db.collection('chats').doc(this.activeChatId).collection('messages').add({ senderId: "system", text: "📞 Входящий вызов...", type: "system", timestamp: firebase.firestore.FieldValue.serverTimestamp() });
     }
 
     showChatManagement() {
         const id = this.activeChatId;
         const chat = this.allChats.find(c => c.id === id);
         if (!chat) return;
-
+        const link = `${window.location.origin}${window.location.pathname}?join=${id}`;
         document.getElementById('modal-title').innerText = "Настройки";
-        const inviteLink = `${window.location.protocol}//${window.location.host}${window.location.pathname}?join=${id}`;
-
-        let html = `
-            <div style="text-align:left;">
-                <p style="margin-bottom:5px;">ID чата:</p>
-                <input type="text" value="${id}" readonly style="width:100%; padding:10px; background:rgba(255,255,255,0.05); border:1px solid var(--glass-border); color:white; border-radius:8px; margin-bottom:15px;">
-                
-                <p style="margin-bottom:5px;">Ссылка-приглашение:</p>
-                <button onclick="navigator.clipboard.writeText('${inviteLink}'); alert('Ссылка скопирована!');" class="primary-btn" style="width:100%; margin-bottom:15px; font-size:13px;">Скопировать ссылку</button>
+        document.getElementById('modal-body').innerHTML = `
+            <p style="font-size:12px; margin-bottom:5px;">ID чата:</p>
+            <input type="text" value="${id}" readonly style="width:100%; padding:10px; background:rgba(0,0,0,0.2); border:none; color:white; border-radius:8px; margin-bottom:15px;">
+            <p style="font-size:12px; margin-bottom:5px;">Ссылка-приглашение:</p>
+            <button onclick="navigator.clipboard.writeText('${link}'); alert('Ссылка скопирована!');" class="primary-btn" style="width:100%; margin-bottom:15px;">Копировать ссылку</button>
+            ${chat.type === 'group' ? `<button onclick="App.leaveGroup('${id}')" class="secondary-btn" style="background:#ff4757; color:white; width:100%;">Выйти из группы</button>` : ''}
         `;
-
-        if (chat.type === 'group') {
-            html += `<button onclick="App.leaveGroup('${id}')" class="secondary-btn" style="background:#ff4757; color:white; width:100%;">Покинуть группу</button>`;
-        }
-
-        html += `</div>`;
-        document.getElementById('modal-body').innerHTML = html;
         document.getElementById('modal-container').classList.remove('hidden');
     }
 
     async leaveGroup(id) {
-        if (confirm("Выйти из группы?")) {
+        if (confirm("Покинуть группу?")) {
             await db.collection('chats').doc(id).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.currentUser.uid) });
-            document.getElementById('modal-container').classList.add('hidden');
+            location.reload();
         }
     }
 
     showProfileSettings() {
-        const n = prompt("Ваш ник:");
+        const n = prompt("Новый ник:");
         if (n) db.collection('users').doc(this.currentUser.uid).update({ username: n, avatar: n[0].toUpperCase(), searchKeywords: n.toLowerCase() }).then(() => location.reload());
     }
 
