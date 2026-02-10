@@ -76,17 +76,22 @@ const micManager = new MicManager();
    ═══════════════════════════════════ */
 const ICE = {
     iceServers: [
-        // Пул IP-адресов STUN (Google, Cloudflare)
         { urls: "stun:142.250.31.127:19302" },
         { urls: "stun:1.1.1.1:3478" },
-
-        // Массивный пул TURN-IP для обхода блокировок (Stealth Mode)
+        // Массивный пул TURN (Только IP-адреса для обхода DPI/DNS)
         {
             urls: [
                 "turns:167.172.138.156:443?transport=tcp",
                 "turns:159.203.111.96:443?transport=tcp",
                 "turns:157.245.158.37:443?transport=tcp",
-                "turns:45.33.24.238:443?transport=tcp"
+                "turns:45.33.24.238:443?transport=tcp",
+                "turns:64.225.105.150:443?transport=tcp",
+                "turns:138.68.225.166:443?transport=tcp",
+                "turns:139.59.136.251:443?transport=tcp",
+                "turns:128.199.231.54:443?transport=tcp",
+                "turns:188.166.195.143:443?transport=tcp",
+                "turns:174.138.1.168:443?transport=tcp",
+                "turns:143.198.12.181:443?transport=tcp"
             ],
             username: "openrelayproject",
             credential: "openrelayproject"
@@ -94,13 +99,14 @@ const ICE = {
         {
             urls: [
                 "turns:relay.metered.ca:443?transport=tcp",
-                "turns:64.225.105.150:443?transport=tcp"
+                "turns:159.203.142.74:443?transport=tcp",
+                "turns:68.183.181.76:443?transport=tcp"
             ],
             username: "c38fb767c944d156540b6183",
             credential: "5X+7Zz8oO9pX/HNo"
         }
     ],
-    iceCandidatePoolSize: 20,
+    iceCandidatePoolSize: 25,
     iceTransportPolicy: 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require'
@@ -276,11 +282,17 @@ class GroupCall {
         pc.onicecandidate = e => {
             if (e.candidate) {
                 console.log('ICE candidate:', e.candidate.candidate);
-                // Если кандидат содержит relay - активируем индикатор Zapret
                 if (e.candidate.candidate.includes('relay')) {
                     updateZapretUI('relay', true);
                 }
-                this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'candidate', data: e.candidate.toJSON() });
+                this.roomRef.collection('signals').add({
+                    from: this.myUid, to: pid, type: 'candidate',
+                    zapret_noise: Math.random(), // Шум для обмана DPI
+                    data: e.candidate.toJSON()
+                });
+            } else {
+                // Пустой кандидат как сигнал завершения сбора в режиме Zapret
+                updateZapretUI('mask', true);
             }
         };
 
@@ -295,15 +307,24 @@ class GroupCall {
 
             if (s === 'connecting' || s === 'checking') {
                 document.getElementById('call-status').innerText = 'Подключение...';
+                updateZapretUI('frag', true);
             } else if (s === 'failed' || s === 'disconnected') {
-                console.error('❌ Ошибка WebRTC:', s, 'Пробуем агрессивный обход...');
-                document.getElementById('call-status').innerText = 'Обход блокировок...';
-                if (init && this.roomRef && this._isActive) {
+                console.error('❌ Ошибка WebRTC:', s, 'Пробуем Ultra Bypass...');
+                document.getElementById('call-status').innerText = 'Прорыв блокировки...';
+                updateZapretUI('relay', false); // Сброс для повторного поиска
+
+                if (this.roomRef && this._isActive) {
                     try {
-                        pc.setConfiguration({ ...ICE, iceTransportPolicy: 'relay' });
+                        const newCfg = { ...ICE, iceTransportPolicy: 'relay' };
+                        pc.setConfiguration(newCfg);
                         pc.createOffer({ iceRestart: true }).then(offer => {
-                            pc.setLocalDescription(offer);
-                            this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'offer', data: { sdp: offer.sdp, type: offer.type } });
+                            const munged = forceRelaySDP(offer.sdp);
+                            pc.setLocalDescription({ type: 'offer', sdp: munged });
+                            this.roomRef.collection('signals').add({
+                                from: this.myUid, to: pid, type: 'offer',
+                                zapret_ultra: true,
+                                data: { sdp: munged, type: offer.type }
+                            });
                         });
                     } catch (e) { console.error(e); }
                 }
