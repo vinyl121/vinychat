@@ -76,12 +76,31 @@ const micManager = new MicManager();
    ═══════════════════════════════════ */
 const ICE = {
     iceServers: [
+        // STUN servers (helps discover public IP)
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
         { urls: "stun:stun.stunprotocol.org:3478" },
         { urls: "stun:stun.voip.blackberry.com:3478" },
-        { urls: "stun:openrelay.metered.ca:80" }
-    ]
+
+        // TURN servers (relay traffic through server - critical for Russia!)
+        {
+            urls: "turn:openrelay.metered.ca:80",
+            username: "openrelayproject",
+            credential: "openrelayproject"
+        },
+        {
+            urls: "turn:openrelay.metered.ca:443",
+            username: "openrelayproject",
+            credential: "openrelayproject"
+        },
+        {
+            urls: "turn:openrelay.metered.ca:443?transport=tcp",
+            username: "openrelayproject",
+            credential: "openrelayproject"
+        }
+    ],
+    iceCandidatePoolSize: 10,
+    iceTransportPolicy: 'all'  // Try STUN first, fallback to TURN
 };
 
 class GroupCall {
@@ -91,6 +110,7 @@ class GroupCall {
         this.peers = {};
         this.audioElements = {};
         this.roomRef = null;
+        this.roomId = null;  // Track current room ID
         this.signalUnsub = null;
         this.roomUnsub = null;
         this.timerInterval = null;
@@ -99,6 +119,7 @@ class GroupCall {
         this.camOff = false;
         this.withVideo = false;
         this.myUid = null;
+        this._isActive = false;  // Guard flag
     }
 
     async joinRoom(chatId, uid, withVideo = false) {
@@ -124,6 +145,9 @@ class GroupCall {
             document.getElementById('call-overlay').classList.add('video-active');
         }
 
+        // Mark as active
+        this._isActive = true;
+
         // Find or create room
         const snap = await db.collection('chats').doc(chatId).collection('rooms')
             .where('status', '==', 'active').limit(1).get();
@@ -142,8 +166,18 @@ class GroupCall {
             await this.roomRef.update({ participants: firebase.firestore.FieldValue.arrayUnion(uid) });
         }
 
+        // Store room ID to check in callbacks
+        this.roomId = this.roomRef.id;
+
         // Watch participants
+        const currentRoomId = this.roomRef.id;
         this.roomUnsub = this.roomRef.onSnapshot(snap => {
+            // Guard: ignore if this listener is for old room
+            if (!this._isActive || this.roomId !== currentRoomId) {
+                console.log('Ignoring snapshot from old room');
+                return;
+            }
+
             const data = snap.data();
             if (!data || data.status === 'ended') { this.cleanup(); return; }
             const parts = data.participants || [];
@@ -199,13 +233,24 @@ class GroupCall {
         };
 
         pc.onicecandidate = e => {
-            if (e.candidate) this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'candidate', data: e.candidate.toJSON() });
+            if (e.candidate) {
+                console.log('ICE candidate:', e.candidate.candidate);
+                this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'candidate', data: e.candidate.toJSON() });
+            }
         };
 
         const check = () => {
             const s = pc.connectionState || pc.iceConnectionState;
+            console.log(`WebRTC connection state for ${pid}:`, s);
             if ((s === 'connected' || s === 'completed') && !this.timerInterval) {
                 this.sounds.stopAll(); this.sounds.playConnected(); this.onConnected();
+            }
+            // Update UI with connection status
+            if (s === 'connecting' || s === 'checking') {
+                document.getElementById('call-status').innerText = 'Подключение...';
+            } else if (s === 'failed' || s === 'disconnected') {
+                console.error('WebRTC connection failed for', pid, '- trying TURN relay');
+                document.getElementById('call-status').innerText = 'Обход блокировок...';
             }
         };
         pc.onconnectionstatechange = check;
@@ -257,27 +302,40 @@ class GroupCall {
 
     async endCall() {
         this.sounds.playHangup();
+
+        // Mark as inactive FIRST to prevent listeners from processing events
+        this._isActive = false;
+
+        // Unsubscribe before updating Firestore to avoid race condition
+        if (this.signalUnsub) { this.signalUnsub(); this.signalUnsub = null; }
+        if (this.roomUnsub) { this.roomUnsub(); this.roomUnsub = null; }
+
+        // Now update Firestore
         if (this.roomRef) {
-            // ALWAYS mark room as ended so other participants see it
             await this.roomRef.update({
                 participants: firebase.firestore.FieldValue.arrayRemove(this.myUid),
                 status: 'ended'
             }).catch(() => { });
         }
+
         this.cleanup();
     }
 
     cleanup() {
+        this._isActive = false;
         this.sounds.stopAll();
         if (this.timerInterval) clearInterval(this.timerInterval);
         this.timerInterval = null;
-        this.seconds = 0;  // ← CRITICAL: reset timer so next call doesn't think it's already connected
+        this.seconds = 0;
         if (this.localStream) this.localStream.getTracks().forEach(t => t.stop());
         this.localStream = null;
         Object.keys(this.peers).forEach(id => this._removePeer(id));
-        if (this.signalUnsub) this.signalUnsub();
-        if (this.roomUnsub) this.roomUnsub();
-        this.signalUnsub = null; this.roomUnsub = null; this.roomRef = null; this.myUid = null;
+        // Unsubscribe if not already done
+        if (this.signalUnsub) { this.signalUnsub(); this.signalUnsub = null; }
+        if (this.roomUnsub) { this.roomUnsub(); this.roomUnsub = null; }
+        this.roomRef = null;
+        this.roomId = null;
+        this.myUid = null;
         const rv = document.getElementById('remote-video'), lv = document.getElementById('local-video');
         if (rv) { rv.srcObject = null; rv.classList.add('hidden'); }
         if (lv) { lv.srcObject = null; lv.classList.add('hidden'); }
