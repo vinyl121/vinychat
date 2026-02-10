@@ -1039,3 +1039,65 @@ body {
         font-size: 20px;
     }
 }
+
+/* ZAPRET ENGINE UI */
+.zapret-engine-mini {
+    margin-top: 15px;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 10px 15px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(5px);
+}
+
+.ze-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--dim);
+    margin-bottom: 8px;
+}
+
+.ze-indicators {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.ze-dot {
+    font-size: 10px;
+    padding: 3px 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    color: var(--dim);
+    transition: all 0.3s ease;
+    border: 1px solid transparent;
+}
+
+.ze-dot.active {
+    background: rgba(144, 103, 224, 0.2);
+    color: #a29bfe;
+    border-color: rgba(162, 155, 254, 0.3);
+    box-shadow: 0 0 10px rgba(162, 155, 254, 0.2);
+}
+
+.ze-dot.pulse {
+    animation: zePulse 1.5s infinite;
+}
+
+@keyframes zePulse {
+    0% {
+        opacity: 0.5;
+        transform: scale(0.95);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    100% {
+        opacity: 0.5;
+        transform: scale(0.95);
+    }
+}

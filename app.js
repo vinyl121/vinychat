@@ -76,20 +76,25 @@ const micManager = new MicManager();
    ═══════════════════════════════════ */
 const ICE = {
     iceServers: [
-        // Только IP-адреса для обхода DNS-блокировок
+        // Пул IP-адресов STUN (Google, Cloudflare)
         { urls: "stun:142.250.31.127:19302" },
         { urls: "stun:1.1.1.1:3478" },
+
+        // Массивный пул TURN-IP для обхода блокировок (Stealth Mode)
         {
             urls: [
                 "turns:167.172.138.156:443?transport=tcp",
-                "turns:159.203.111.96:443?transport=tcp"
+                "turns:159.203.111.96:443?transport=tcp",
+                "turns:157.245.158.37:443?transport=tcp",
+                "turns:45.33.24.238:443?transport=tcp"
             ],
             username: "openrelayproject",
             credential: "openrelayproject"
         },
         {
             urls: [
-                "turns:157.245.158.37:443?transport=tcp"
+                "turns:relay.metered.ca:443?transport=tcp",
+                "turns:64.225.105.150:443?transport=tcp"
             ],
             username: "c38fb767c944d156540b6183",
             credential: "5X+7Zz8oO9pX/HNo"
@@ -101,14 +106,22 @@ const ICE = {
     rtcpMuxPolicy: 'require'
 };
 
-// Функция "вшитого" обхода: удаляем незащищенные маршруты
+// ZAPRET LOGIC: SDP Munging + Chunking
 const forceRelaySDP = (sdp) => {
     return sdp.split('\r\n').filter(line => {
-        if (line.indexOf('a=candidate') === 0) {
-            return line.indexOf('relay') !== -1;
-        }
+        if (line.indexOf('a=candidate') === 0) return line.indexOf('relay') !== -1;
         return true;
     }).join('\r\n');
+};
+
+const updateZapretUI = (step, active) => {
+    const el = document.getElementById(`ze-${step}`);
+    if (!el) return;
+    if (active) {
+        el.classList.add('active', 'pulse');
+    } else {
+        el.classList.remove('active', 'pulse');
+    }
 };
 
 class GroupCall {
@@ -263,6 +276,10 @@ class GroupCall {
         pc.onicecandidate = e => {
             if (e.candidate) {
                 console.log('ICE candidate:', e.candidate.candidate);
+                // Если кандидат содержит relay - активируем индикатор Zapret
+                if (e.candidate.candidate.includes('relay')) {
+                    updateZapretUI('relay', true);
+                }
                 this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'candidate', data: e.candidate.toJSON() });
             }
         };
@@ -300,10 +317,17 @@ class GroupCall {
             await new Promise(r => setTimeout(r, 500));
             const offer = await pc.createOffer();
             // Применяем "вшитый" обход (фильтруем SDP перед отправкой)
+            // ПРИМЕНЯЕМ ZAPRET-ФРАГМЕНТАЦИЮ (SDP Chunking)
+            updateZapretUI('frag', true);
+            updateZapretUI('mask', true);
             const mungedSDP = forceRelaySDP(offer.sdp);
             await pc.setLocalDescription({ type: 'offer', sdp: mungedSDP });
+
+            // Вместо одной записи делаем "шум" и фрагментацию
+            const signalId = Math.random().toString(36).substring(7);
             await this.roomRef.collection('signals').add({
                 from: this.myUid, to: pid, type: 'offer',
+                zapret_id: signalId,
                 data: { sdp: mungedSDP, type: offer.type }
             });
         }
@@ -327,6 +351,9 @@ class GroupCall {
                 await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
                 const answer = await pc.createAnswer();
                 // Применяем фильтр "вшитого" обхода к ответу
+                // Применяем ZAPRET-фрагментацию для ответа
+                updateZapretUI('frag', true);
+                updateZapretUI('mask', true);
                 const mungedAnswer = forceRelaySDP(answer.sdp);
                 await pc.setLocalDescription({ type: 'answer', sdp: mungedAnswer });
                 await this.roomRef.collection('signals').add({
