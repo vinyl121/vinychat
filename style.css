@@ -443,12 +443,20 @@ input:focus {
 
 .input-wrapper {
     flex: 1;
+    position: relative;
+    z-index: 100;
 }
 
 .input-wrapper input {
+    width: 100%;
     border-radius: 15px;
     padding: 12px 20px;
     background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    outline: none;
+    position: relative;
+    z-index: 101;
 }
 
 .send-btn {
