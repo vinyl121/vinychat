@@ -4,13 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vinychat | Мессенджер</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <title>Vinychat 3.6</title>
     <link rel="stylesheet" href="style.css">
-
-    <!-- Firebase SDKs (Compatibility Version) -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
@@ -18,81 +14,69 @@
 </head>
 
 <body>
-    <div id="app" class="app-container">
-        <!-- Auth Screen -->
-        <div id="auth-screen" class="screen active">
-            <div class="glass-card auth-card">
-                <div class="logo">
-                    <div class="logo-icon">V</div>
-                    <h1>Vinychat</h1>
-                </div>
-                <div id="auth-forms">
-                    <div id="login-form">
-                        <h2>Вход</h2>
-                        <div class="input-group"><input type="email" id="login-email" placeholder="Email"></div>
-                        <div class="input-group"><input type="password" id="login-password" placeholder="Пароль"></div>
-                        <button id="btn-login" class="primary-btn">Войти</button>
-                        <div style="margin: 15px 0; opacity: 0.5;">или</div>
-                        <button id="btn-google" class="secondary-btn"
-                            style="background: white; color: black; display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; border: none; cursor: pointer;">
-                            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google.svg" width="18">
-                            Войти через Google
-                        </button>
-                        <p class="auth-switch">Нет аккаунта? <a href="#" id="show-register">Создать</a></p>
-                    </div>
+    <!-- Экран входа -->
+    <div id="auth-screen" class="screen active">
+        <div class="auth-card">
+            <div class="logo">🍷 Vinychat</div>
 
-                    <div id="register-form" class="hidden">
-                        <h2>Регистрация</h2>
-                        <div class="input-group"><input type="text" id="reg-username" placeholder="Никнейм"></div>
-                        <div class="input-group"><input type="email" id="reg-email" placeholder="Email"></div>
-                        <div class="input-group"><input type="password" id="reg-password" placeholder="Пароль"></div>
-                        <button id="btn-register" class="primary-btn">Создать аккаунт</button>
-                        <p class="auth-switch">Есть аккаунт? <a href="#" id="show-login">Войти</a></p>
-                    </div>
-                </div>
-            </div>
+            <form id="login-form">
+                <input type="email" id="login-email" placeholder="Почта" required>
+                <input type="password" id="login-password" placeholder="Пароль" required>
+                <button type="button" id="btn-login" class="primary-btn">Войти</button>
+                <p>Нет аккаунта? <a href="#" id="show-register">Создать</a></p>
+            </form>
+
+            <form id="register-form" class="hidden">
+                <input type="text" id="reg-username" placeholder="Никнейм" required>
+                <input type="email" id="reg-email" placeholder="Почта" required>
+                <input type="password" id="reg-password" placeholder="Пароль" required>
+                <button type="button" id="btn-register" class="primary-btn">Регистрация</button>
+                <p>Уже есть аккаунт? <a href="#" id="show-login">Войти</a></p>
+            </form>
         </div>
+    </div>
 
-        <!-- Main Chat Screen -->
-        <div id="chat-screen" class="screen">
-            <aside class="sidebar glass-effect">
-                <div class="sidebar-header">
-                    <div class="user-profile-brief" style="cursor:pointer" id="btn-settings">
-                        <div class="avatar" id="current-user-avatar">V</div>
-                        <div class="user-info">
-                            <span id="current-username" class="username">Профиль</span>
-                            <span class="status online">Онлайн ⚙️</span>
+    <!-- Основной экран чата -->
+    <div id="chat-screen" class="screen">
+        <div class="chat-container">
+            <aside class="sidebar">
+                <div class="user-profile">
+                    <div class="user-info">
+                        <div class="avatar" id="current-user-avatar">?</div>
+                        <div class="details">
+                            <span id="current-username" class="name">User</span>
+                            <span class="status">Онлайн <span id="btn-settings"
+                                    style="cursor:pointer; font-size:12px;">⚙️</span></span>
                         </div>
                     </div>
-                    <button id="btn-logout" class="icon-btn"
-                        style="font-size: 11px; border: 1px solid rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 8px;">Выход</button>
+                    <button id="btn-logout" class="icon-btn" title="Выход">Выход</button>
                 </div>
 
-                <div class="search-bar" style="padding: 0 20px 15px;">
-                    <input type="text" id="chat-search" placeholder="🔍 Поиск людей или групп...">
+                <div class="search-bar">
+                    <input type="text" id="chat-search" placeholder="Поиск людей или групп...">
                 </div>
 
-                <div class="chat-list" id="chat-list"></div>
+                <div id="chat-list" class="chat-list"></div>
 
-                <div class="sidebar-footer" style="padding: 15px 20px;">
-                    <button id="btn-create-group" class="action-btn" style="width: 100%;">+ Создать группу</button>
-                </div>
+                <button id="btn-create-group" class="create-group-btn">+ Создать группу</button>
             </aside>
 
-            <main class="chat-main glass-effect">
-                <div id="no-chat-selected" class="empty-state">
-                    <div class="illustration">🍷</div>
-                    <h2>Vinychat 3.1</h2>
-                    <p>Используйте поиск для поиска друзей или групп</p>
+            <main class="chat-main" id="chat-window">
+                <div id="no-chat-selected" class="no-chat">
+                    <div class="welcome">
+                        <img src="https://cdn-icons-png.flaticon.com/512/3126/3126581.png" alt="logo" width="100">
+                        <h1>Vinychat 3.6</h1>
+                        <p>Используйте поиск для поиска друзей или групп</p>
+                    </div>
                 </div>
 
-                <div id="active-chat" class="chat-container hidden">
+                <div id="active-chat" class="active-chat hidden">
                     <header class="chat-header">
                         <div class="chat-info">
-                            <div class="avatar" id="active-chat-avatar"></div>
-                            <div>
-                                <h3 id="active-chat-name">Чат</h3>
-                                <div class="status">онлайн</div>
+                            <div class="avatar" id="active-chat-avatar">👥</div>
+                            <div class="details">
+                                <h2 id="active-chat-name">Имя чата</h2>
+                                <span class="status">онлайн</span>
                             </div>
                         </div>
                         <div class="chat-actions">
@@ -101,31 +85,31 @@
                         </div>
                     </header>
 
-                    <div class="messages-area" id="messages-area"></div>
+                    <div id="messages-area" class="messages-area"></div>
 
-                    <input type="file" id="file-input" class="hidden">
-
-                    <footer class="chat-input-area" style="position: relative; z-index: 1000;">
-                        <button class="icon-btn" id="btn-attachment">📎</button>
-                        <div class="input-wrapper" style="flex: 1;">
-                            <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off"
-                                style="width: 100%; z-index: 1001; position: relative;">
+                    <footer class="chat-footer">
+                        <button id="btn-attachment" class="icon-btn">📎</button>
+                        <input type="file" id="file-input" class="hidden" accept="image/*,.pdf,.doc,.docx">
+                        <div class="input-wrapper">
+                            <input type="text" id="message-input" placeholder="Введите сообщение...">
+                            <button id="btn-send" class="send-btn">🚀</button>
                         </div>
-                        <button id="btn-send" class="send-btn">🚀</button>
                     </footer>
                 </div>
             </main>
         </div>
     </div>
 
-    <!-- Modals -->
+    <!-- Модальное окно -->
     <div id="modal-container" class="modal-overlay hidden">
-        <div class="glass-card modal-content">
-            <h3 id="modal-title">Настройки</h3>
-            <div id="modal-body"></div>
-            <div class="modal-actions">
-                <button id="modal-cancel" class="secondary-btn">Закрыть</button>
-                <button id="modal-confirm" class="primary-btn">Применить</button>
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="modal-title">Настройки</h3>
+                <button id="modal-cancel-icon" class="close-modal">&times;</button>
+            </div>
+            <div id="modal-body" class="modal-body"></div>
+            <div class="modal-footer">
+                <button id="modal-cancel" class="close-btn">Применить</button>
             </div>
         </div>
     </div>
