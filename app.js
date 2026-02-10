@@ -116,14 +116,19 @@ class GroupCall {
         const snap = await db.collection('chats').doc(chatId).collection('rooms')
             .where('status', '==', 'active').limit(1).get();
 
-        this.roomRef = snap.empty
-            ? await db.collection('chats').doc(chatId).collection('rooms').add({
-                status: 'active', participants: [], withVideo,
+        if (snap.empty) {
+            // Create new room with me already in participants
+            this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
+                status: 'active',
+                participants: [uid],
+                withVideo,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            })
-            : snap.docs[0].ref;
-
-        await this.roomRef.update({ participants: firebase.firestore.FieldValue.arrayUnion(uid) });
+            });
+        } else {
+            // Join existing room
+            this.roomRef = snap.docs[0].ref;
+            await this.roomRef.update({ participants: firebase.firestore.FieldValue.arrayUnion(uid) });
+        }
 
         // Watch participants
         this.roomUnsub = this.roomRef.onSnapshot(snap => {
