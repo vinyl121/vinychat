@@ -311,7 +311,8 @@ class GroupCall {
             } else if (s === 'failed' || s === 'disconnected') {
                 console.error('❌ Ошибка WebRTC:', s, 'Пробуем Ultra Bypass...');
                 document.getElementById('call-status').innerText = 'Прорыв блокировки...';
-                updateZapretUI('relay', false); // Сброс для повторного поиска
+                document.getElementById('bypass-tool-btn').style.display = 'flex'; // Показываем кнопку скачивания внешнего обхода
+                updateZapretUI('relay', false);
 
                 if (this.roomRef && this._isActive) {
                     try {
