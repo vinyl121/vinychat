@@ -146,7 +146,57 @@ class GroupCall {
         this.camOff = false;
         this.withVideo = false;
         this.myUid = null;
-        this._isActive = false;  // Guard flag
+        this.myUid = null;
+        this._isActive = false;
+        this.stealthMode = false; // Режим Стелс-Туннеля
+        this.mediaRecorder = null;
+    }
+
+    async toggleStealth() {
+        this.stealthMode = !this.stealthMode;
+        console.log('--- Stealth Mode:', this.stealthMode ? 'ON' : 'OFF', '---');
+        const btn = document.getElementById('ze-stealth');
+        if (this.stealthMode) {
+            btn.classList.add('active', 'pulse');
+            this.startStealthBroadcasting();
+        } else {
+            btn.classList.remove('active', 'pulse');
+            if (this.mediaRecorder) this.mediaRecorder.stop();
+        }
+    }
+
+    async startStealthBroadcasting() {
+        if (!this.localStream) return;
+        // Нарезаем голос на куски по 400мс
+        this.mediaRecorder = new MediaRecorder(this.localStream, { mimeType: 'audio/webm;codecs=opus' });
+        this.mediaRecorder.ondataavailable = async (e) => {
+            if (e.data.size > 0 && this.stealthMode) {
+                const reader = new FileReader();
+                reader.readAsDataURL(e.data);
+                reader.onloadend = () => {
+                    const base64data = reader.result;
+                    this.roomRef.collection('stealth_relay').add({
+                        from: this.myUid,
+                        data: base64data,
+                        ts: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                };
+            }
+        };
+        this.mediaRecorder.start(400);
+
+        // Слушаем чужой голос через туннель
+        this.roomRef.collection('stealth_relay')
+            .where('from', '!=', this.myUid)
+            .orderBy('ts', 'desc').limit(1)
+            .onSnapshot(snap => {
+                snap.docChanges().forEach(ch => {
+                    if (ch.type === 'added' && this.stealthMode) {
+                        const audio = new Audio(ch.doc.data().data);
+                        audio.play().catch(() => { });
+                    }
+                });
+            });
     }
 
     async joinRoom(chatId, uid, withVideo = false) {
@@ -200,6 +250,10 @@ class GroupCall {
         // Store room ID to check in callbacks
         this.roomId = this.roomRef.id;
         console.log('ID текущей комнаты:', this.roomId);
+
+        // Сразу включаем индикаторы Zapret Engine
+        updateZapretUI('frag', true);
+        updateZapretUI('mask', true);
 
         // Watch participants
         const currentRoomId = this.roomRef.id;
