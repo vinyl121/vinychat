@@ -21,9 +21,10 @@ body {
     overflow: hidden;
     background: var(--bg);
     color: #fff;
+    -webkit-tap-highlight-color: transparent;
 }
 
-/* ── SCREENS ─────────────────────────── */
+/* ── SCREENS ─────────────────────── */
 .screen {
     display: none;
     width: 100%;
@@ -34,20 +35,23 @@ body {
     display: flex !important;
 }
 
-/* ── AUTH ─────────────────────────────── */
+/* ── AUTH ─────────────────────────── */
 #auth-screen {
     align-items: center;
     justify-content: center;
     background: radial-gradient(ellipse at 30% 0%, #2d1b4d 0%, var(--bg) 70%);
+    padding: 20px;
 }
 
 .auth-card {
     background: var(--surface);
     padding: 40px;
     border-radius: 24px;
-    width: 380px;
+    width: 100%;
+    max-width: 380px;
     text-align: center;
     border: 1px solid var(--border);
+    animation: fadeUp .4s ease;
 }
 
 .logo {
@@ -64,7 +68,7 @@ body {
     width: 100%;
     padding: 12px 16px;
     margin-bottom: 12px;
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(0, 0, 0, .3);
     border: 1px solid var(--border);
     border-radius: 10px;
     color: #fff;
@@ -87,7 +91,7 @@ body {
     text-decoration: none;
 }
 
-/* ── LAYOUT ──────────────────────────── */
+/* ── LAYOUT ──────────────────────── */
 .chat-layout {
     display: flex;
     width: 100%;
@@ -102,6 +106,7 @@ body {
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--border);
+    transition: transform .3s ease;
 }
 
 .main-area {
@@ -112,13 +117,14 @@ body {
     height: 100%;
 }
 
-/* ── PROFILE BAR ─────────────────────── */
+/* ── PROFILE BAR ─────────────────── */
 .profile-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 16px;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
 }
 
 .profile-left {
@@ -147,7 +153,7 @@ body {
     height: 32px;
     border: none;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, .06);
     color: #fff;
     cursor: pointer;
     font-size: 14px;
@@ -162,7 +168,7 @@ body {
 }
 
 .logout-btn {
-    background: rgba(255, 70, 90, 0.15);
+    background: rgba(255, 70, 90, .15);
     color: #ff4757;
 }
 
@@ -171,7 +177,7 @@ body {
     color: #fff;
 }
 
-/* ── AVATAR ──────────────────────────── */
+/* ── AVATAR ──────────────────────── */
 .avatar {
     width: 40px;
     height: 40px;
@@ -186,7 +192,7 @@ body {
     color: #fff;
 }
 
-/* ── CHAT LIST ───────────────────────── */
+/* ── CHAT LIST ───────────────────── */
 .chat-list {
     flex: 1;
     overflow-y: auto;
@@ -204,11 +210,13 @@ body {
 }
 
 .chat-item:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, .04);
+    transform: translateX(3px);
 }
 
 .chat-item.active {
-    background: rgba(161, 0, 255, 0.15);
+    background: rgba(161, 0, 255, .15);
+    border-left: 3px solid var(--primary);
 }
 
 .chat-item .ci-name {
@@ -222,6 +230,7 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 180px;
 }
 
 .create-group-btn {
@@ -235,13 +244,16 @@ body {
     font-size: 14px;
     cursor: pointer;
     transition: .2s;
+    flex-shrink: 0;
+    box-shadow: 0 4px 15px rgba(161, 0, 255, .25);
 }
 
 .create-group-btn:hover {
     filter: brightness(1.15);
+    transform: translateY(-1px);
 }
 
-/* ── WELCOME ─────────────────────────── */
+/* ── WELCOME ─────────────────────── */
 .welcome-screen {
     flex: 1;
     display: flex;
@@ -264,11 +276,12 @@ body {
     margin-bottom: 8px;
 }
 
-/* ── CHAT PANEL ──────────────────────── */
+/* ── CHAT PANEL ──────────────────── */
 .chat-panel {
     display: flex;
     flex-direction: column;
     height: 100%;
+    animation: fadeUp .3s ease;
 }
 
 .chat-header {
@@ -306,7 +319,7 @@ body {
     height: 36px;
     border: none;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, .06);
     color: #fff;
     cursor: pointer;
     font-size: 16px;
@@ -320,7 +333,24 @@ body {
     background: var(--primary);
 }
 
-/* ── MESSAGES ────────────────────────── */
+/* Back button - hidden on desktop */
+.back-btn {
+    display: none;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .06);
+    color: #fff;
+    cursor: pointer;
+    font-size: 20px;
+    align-items: center;
+    justify-content: center;
+    transition: .2s;
+    margin-right: 4px;
+}
+
+/* ── MESSAGES ────────────────────── */
 .messages {
     flex: 1;
     overflow-y: auto;
@@ -329,6 +359,7 @@ body {
     flex-direction: column;
     gap: 8px;
     min-height: 0;
+    -webkit-overflow-scrolling: touch;
 }
 
 .message {
@@ -350,8 +381,14 @@ body {
 
 .message.other {
     align-self: flex-start;
-    background: rgba(255, 255, 255, 0.07);
+    background: rgba(255, 255, 255, .07);
     border-bottom-left-radius: 4px;
+    cursor: pointer;
+    transition: background .15s;
+}
+
+.message.other:hover {
+    background: rgba(255, 255, 255, .12);
 }
 
 .message.system {
@@ -390,7 +427,7 @@ body {
     }
 }
 
-/* ── COMPOSER ────────────────────────── */
+/* ── COMPOSER ────────────────────── */
 .composer {
     display: flex;
     align-items: center;
@@ -398,13 +435,13 @@ body {
     padding: 14px 20px;
     border-top: 1px solid var(--border);
     flex-shrink: 0;
-    background: rgba(0, 0, 0, 0.15);
+    background: rgba(0, 0, 0, .15);
 }
 
 .composer input {
     flex: 1;
     padding: 12px 16px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, .05);
     border: 1px solid var(--border);
     border-radius: 12px;
     color: #fff;
@@ -427,6 +464,7 @@ body {
     cursor: pointer;
     flex-shrink: 0;
     transition: .2s;
+    box-shadow: 0 0 20px rgba(161, 0, 255, .3);
 }
 
 .send-btn:hover {
@@ -434,7 +472,7 @@ body {
     transform: scale(1.05);
 }
 
-/* ── MODAL ───────────────────────────── */
+/* ── MODAL ───────────────────────── */
 .modal-backdrop {
     position: fixed;
     inset: 0;
@@ -444,11 +482,13 @@ body {
     justify-content: center;
     z-index: 9000;
     backdrop-filter: blur(8px);
+    padding: 20px;
 }
 
 .modal-box {
     background: var(--surface);
-    width: 380px;
+    width: 100%;
+    max-width: 380px;
     padding: 28px;
     border-radius: 20px;
     border: 1px solid var(--border);
@@ -496,7 +536,7 @@ body {
     font-size: 14px;
 }
 
-/* ── BUTTONS ─────────────────────────── */
+/* ── BUTTONS ─────────────────────── */
 .primary-btn {
     background: var(--primary-gradient);
     border: none;
@@ -517,11 +557,11 @@ body {
     background: #ff4757 !important;
 }
 
-/* ── CALL OVERLAY ────────────────────── */
+/* ── CALL OVERLAY ────────────────── */
 .call-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(10, 10, 20, .95);
+    background: linear-gradient(180deg, #0a0a14 0%, #1a0a2e 100%);
     display: flex !important;
     align-items: center;
     justify-content: center;
@@ -530,48 +570,82 @@ body {
 
 .call-card {
     text-align: center;
+    padding: 20px;
 }
 
-.call-avatar {
-    font-size: 80px;
-    margin-bottom: 20px;
-    animation: pulse 2s infinite;
+.call-pulse {
+    width: 120px;
+    height: 120px;
+    margin: 0 auto 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.call-pulse::before {
+    content: '';
+    position: absolute;
+    inset: -10px;
+    border-radius: 50%;
+    border: 2px solid rgba(161, 0, 255, .3);
+    animation: ringPulse 2s infinite;
+}
+
+.call-pulse::after {
+    content: '';
+    position: absolute;
+    inset: -25px;
+    border-radius: 50%;
+    border: 2px solid rgba(161, 0, 255, .15);
+    animation: ringPulse 2s .5s infinite;
+}
+
+.call-avatar-big {
+    font-size: 56px;
+    z-index: 1;
 }
 
 .call-name {
-    font-size: 28px;
+    font-size: 24px;
     font-weight: 700;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .call-status {
     font-size: 14px;
     color: var(--dim);
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .call-timer {
-    font-size: 32px;
+    font-size: 36px;
     font-weight: 300;
-    margin-bottom: 24px;
+    margin-bottom: 28px;
     font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, .8);
 }
 
 .call-buttons {
     display: flex;
-    gap: 16px;
+    gap: 24px;
     justify-content: center;
+    margin-top: 20px;
 }
 
 .call-btn {
-    padding: 14px 32px;
+    width: 64px;
+    height: 64px;
     border: none;
-    border-radius: 50px;
-    font-size: 16px;
-    font-weight: 700;
+    border-radius: 50%;
+    font-size: 24px;
     cursor: pointer;
     transition: .2s;
     color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .call-end {
@@ -580,123 +654,280 @@ body {
 
 .call-end:hover {
     background: #e84050;
+    transform: scale(1.1);
 }
 
-@keyframes pulse {
+.call-mute {
+    background: rgba(255, 255, 255, .12);
+}
+
+.call-mute:hover {
+    background: rgba(255, 255, 255, .2);
+}
+
+.call-mute.muted {
+    background: #10b981;
+}
+
+.call-labels {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    margin-top: 8px;
+}
+
+.call-labels span {
+    width: 64px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--dim);
+}
+
+@keyframes ringPulse {
+    0% {
+        transform: scale(1);
+        opacity: 1
+    }
+
+    100% {
+        transform: scale(1.5);
+        opacity: 0
+    }
+}
+
+/* ── INCOMING CALL BANNER ────────── */
+.incoming-banner {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    z-index: 9800;
+    min-width: 320px;
+    max-width: 420px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .6);
+    animation: slideDown .4s ease;
+}
+
+.incoming-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.incoming-icon {
+    font-size: 28px;
+    animation: shake .5s infinite;
+}
+
+.incoming-name {
+    font-weight: 700;
+    font-size: 15px;
+}
+
+.incoming-label {
+    font-size: 12px;
+    color: var(--dim);
+}
+
+.incoming-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.inc-btn {
+    width: 42px;
+    height: 42px;
+    border: none;
+    border-radius: 50%;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #fff;
+    transition: .2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.inc-accept {
+    background: #10b981;
+}
+
+.inc-accept:hover {
+    background: #0d9668;
+    transform: scale(1.1);
+}
+
+.inc-decline {
+    background: #ff4757;
+}
+
+.inc-decline:hover {
+    background: #e84050;
+    transform: scale(1.1);
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateX(-50%) translateY(-100px);
+        opacity: 0
+    }
+
+    to {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1
+    }
+}
+
+@keyframes shake {
 
     0%,
     100% {
-        transform: scale(1)
+        transform: rotate(0)
     }
 
-    50% {
-        transform: scale(1.1)
+    25% {
+        transform: rotate(-10deg)
+    }
+
+    75% {
+        transform: rotate(10deg)
     }
 }
 
-/* ── SCROLLBAR ───────────────────────── */
+/* ── SCROLLBAR ───────────────────── */
 ::-webkit-scrollbar {
     width: 5px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--border);
+    background: rgba(255, 255, 255, .1);
     border-radius: 10px;
+}
+
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(12px)
+    }
+
+    to {
+        opacity: 1;
+        transform: none
+    }
 }
 
 .hidden {
     display: none !important;
 }
 
-/* ── EXTRA POLISH ────────────────────── */
-.message.other {
-    cursor: pointer;
-    transition: background .15s;
-}
-
-.message.other:hover {
-    background: rgba(255, 255, 255, 0.12);
-}
-
-.auth-card {
-    animation: fadeUp .4s ease;
-}
-
-.chat-panel {
-    animation: fadeUp .3s ease;
-}
-
-@keyframes fadeUp {
-    from {
-        opacity: 0;
-        transform: translateY(12px);
-    }
-
-    to {
-        opacity: 1;
-        transform: none;
-    }
-}
-
-.send-btn {
-    box-shadow: 0 0 20px rgba(161, 0, 255, 0.3);
-}
-
-.send-btn:hover {
-    box-shadow: 0 0 30px rgba(161, 0, 255, 0.5);
-}
-
-.create-group-btn {
-    box-shadow: 0 4px 15px rgba(161, 0, 255, 0.25);
-}
-
-.create-group-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(161, 0, 255, 0.4);
-}
-
-.chat-item {
-    transition: background .15s, transform .15s;
-}
-
-.chat-item:hover {
-    transform: translateX(3px);
-}
-
-.chat-item.active {
-    border-left: 3px solid var(--primary);
-}
-
-.call-card {
-    animation: fadeUp .4s ease;
-}
-
-/* ── RESPONSIVE ──────────────────────── */
+/* ══════════════════════════════════════
+   MOBILE RESPONSIVE
+   ══════════════════════════════════════ */
 @media (max-width: 768px) {
-    .sidebar {
-        width: 260px !important;
-        min-width: 260px;
-        max-width: 260px;
-    }
-}
-
-@media (max-width: 600px) {
     .chat-layout {
-        flex-direction: column;
+        position: relative;
     }
 
     .sidebar {
+        position: absolute;
+        inset: 0;
+        z-index: 100;
         width: 100% !important;
         min-width: unset;
         max-width: unset;
-        height: auto;
-        max-height: 40vh;
-        border-right: none;
-        border-bottom: 1px solid var(--border);
+        transform: translateX(0);
+    }
+
+    .sidebar.sidebar-hidden {
+        transform: translateX(-100%);
+        pointer-events: none;
     }
 
     .main-area {
-        flex: 1;
-        min-height: 0;
+        position: absolute;
+        inset: 0;
+        z-index: 50;
+    }
+
+    .back-btn {
+        display: flex !important;
+    }
+
+    .chat-header {
+        padding: 10px 14px;
+    }
+
+    .header-name {
+        font-size: 14px;
+    }
+
+    .composer {
+        padding: 10px 14px;
+    }
+
+    .composer input {
+        padding: 10px 14px;
+        font-size: 14px;
+    }
+
+    .send-btn {
+        width: 38px;
+        height: 38px;
+    }
+
+    .messages {
+        padding: 14px;
+    }
+
+    .message {
+        max-width: 85%;
+        font-size: 13px;
+    }
+
+    .incoming-banner {
+        min-width: unset;
+        left: 10px;
+        right: 10px;
+        transform: none;
+        max-width: unset;
+    }
+
+    @keyframes slideDown {
+        from {
+            transform: translateY(-100px);
+            opacity: 0
+        }
+
+        to {
+            transform: translateY(0);
+            opacity: 1
+        }
+    }
+
+    .welcome-screen {
+        display: none !important;
+    }
+}
+
+@media (max-width: 380px) {
+    .auth-card {
+        padding: 24px;
+    }
+
+    .profile-bar {
+        padding: 12px;
+    }
+
+    .call-name {
+        font-size: 20px;
     }
 }

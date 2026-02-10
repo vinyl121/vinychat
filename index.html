@@ -3,10 +3,14 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Vinychat</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" crossorigin="use-credentials">
+    <meta name="theme-color" content="#0f0e17">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
@@ -39,7 +43,7 @@
         <div class="chat-layout">
 
             <!-- SIDEBAR -->
-            <aside class="sidebar">
+            <aside class="sidebar" id="sidebar">
                 <div class="profile-bar">
                     <div class="profile-left">
                         <div class="avatar" id="current-user-avatar">?</div>
@@ -57,19 +61,20 @@
                 <button id="btn-create-group" class="create-group-btn">+ Создать группу</button>
             </aside>
 
-            <!-- MAIN CHAT AREA -->
-            <main class="main-area">
+            <!-- MAIN -->
+            <main class="main-area" id="main-area">
                 <div id="no-chat-selected" class="welcome-screen">
                     <div class="welcome-content">
                         <div class="welcome-icon">🍷</div>
                         <h1>Vinychat</h1>
-                        <p>Поделитесь ссылкой на свой профиль, чтобы начать общаться</p>
+                        <p>Выберите чат или поделитесь ссылкой на профиль</p>
                     </div>
                 </div>
 
                 <div id="active-chat" class="chat-panel hidden">
                     <header class="chat-header">
                         <div class="header-left">
+                            <button id="btn-back" class="back-btn">←</button>
                             <div class="avatar" id="active-chat-avatar">👥</div>
                             <div>
                                 <div class="header-name" id="active-chat-name">Чат</div>
@@ -83,7 +88,7 @@
                     </header>
                     <div id="messages-area" class="messages"></div>
                     <div class="composer">
-                        <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off">
+                        <input type="text" id="message-input" placeholder="Сообщение..." autocomplete="off">
                         <button id="btn-send" class="send-btn">➤</button>
                     </div>
                 </div>
@@ -106,13 +111,35 @@
     <!-- CALL OVERLAY -->
     <div id="call-overlay" class="call-overlay hidden">
         <div class="call-card">
-            <div class="call-avatar">📞</div>
+            <div class="call-pulse">
+                <div class="call-avatar-big" id="call-avatar">📞</div>
+            </div>
             <div class="call-name" id="call-name">Звонок</div>
             <div class="call-status" id="call-status">Соединение...</div>
             <div class="call-timer hidden" id="call-timer">00:00</div>
             <div class="call-buttons">
-                <button id="btn-call-end" class="call-btn call-end">Завершить</button>
+                <button id="btn-call-mute" class="call-btn call-mute">🎙️</button>
+                <button id="btn-call-end" class="call-btn call-end">📵</button>
             </div>
+            <div class="call-labels">
+                <span>Микрофон</span>
+                <span>Завершить</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- INCOMING CALL BANNER -->
+    <div id="incoming-call" class="incoming-banner hidden">
+        <div class="incoming-info">
+            <div class="incoming-icon">📞</div>
+            <div>
+                <div class="incoming-name" id="incoming-name">Звонок</div>
+                <div class="incoming-label">Входящий вызов</div>
+            </div>
+        </div>
+        <div class="incoming-actions">
+            <button id="btn-accept-call" class="inc-btn inc-accept">✓</button>
+            <button id="btn-decline-call" class="inc-btn inc-decline">✕</button>
         </div>
     </div>
 
