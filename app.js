@@ -76,31 +76,39 @@ const micManager = new MicManager();
    ═══════════════════════════════════ */
 const ICE = {
     iceServers: [
-        // STUN servers (helps discover public IP)
+        // STUN servers
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
         { urls: "stun:stun.stunprotocol.org:3478" },
         { urls: "stun:stun.voip.blackberry.com:3478" },
 
-        // TURN servers (relay traffic through server - critical for Russia!)
+        // TURN servers (Critical for Russia/NAT/Firewalls)
         {
             urls: "turn:openrelay.metered.ca:80",
             username: "openrelayproject",
             credential: "openrelayproject"
         },
         {
-            urls: "turn:openrelay.metered.ca:443",
+            urls: [
+                "turn:openrelay.metered.ca:443",
+                "turn:openrelay.metered.ca:443?transport=tcp"
+            ],
             username: "openrelayproject",
             credential: "openrelayproject"
         },
+        // Дополнительный отказоустойчивый пул серверов
         {
-            urls: "turn:openrelay.metered.ca:443?transport=tcp",
-            username: "openrelayproject",
-            credential: "openrelayproject"
+            urls: [
+                "turn:relay.metered.ca:80",
+                "turn:relay.metered.ca:443",
+                "turn:relay.metered.ca:443?transport=tcp"
+            ],
+            username: "c38fb767c944d156540b6183",
+            credential: "5X+7Zz8oO9pX/HNo"
         }
     ],
     iceCandidatePoolSize: 10,
-    iceTransportPolicy: 'all'  // Try STUN first, fallback to TURN
+    iceTransportPolicy: 'all'
 };
 
 class GroupCall {
@@ -123,11 +131,15 @@ class GroupCall {
     }
 
     async joinRoom(chatId, uid, withVideo = false) {
+        console.log('--- Начинаем вход в комнату звонка ---');
         this.withVideo = withVideo;
         try {
+            console.log('Запрашиваем доступ к медиа (audio/video)...');
             this.localStream = await micManager.request(withVideo);
+            console.log('Медиа-поток получен успешно.');
         } catch (e) {
-            alert('❌ Не удалось получить доступ к микрофону:\n\n' + e.message + '\n\nПроверьте:\n• Разрешения браузера\n• HTTPS соединение\n• Наличие микрофона');
+            console.error('Ошибка доступа к медиа:', e);
+            alert('❌ Не удалось получить доступ к микрофону:\n\n' + e.message);
             return false;
         }
 
@@ -168,10 +180,13 @@ class GroupCall {
 
         // Store room ID to check in callbacks
         this.roomId = this.roomRef.id;
+        console.log('ID текущей комнаты:', this.roomId);
 
         // Watch participants
         const currentRoomId = this.roomRef.id;
+        console.log('Подключаемся к прослушиванию участников...');
         this.roomUnsub = this.roomRef.onSnapshot(snap => {
+            console.log('Данные комнаты обновлены:', snap.data()?.participants);
             // Guard: ignore if this listener is for old room
             if (!this._isActive || this.roomId !== currentRoomId) {
                 console.log('Ignoring snapshot from old room');
@@ -203,19 +218,22 @@ class GroupCall {
         });
 
         // Listen for signals to me
+        console.log('Подписка на сигнальную систему Firebase...');
         this.signalUnsub = this.roomRef.collection('signals').where('to', '==', uid)
             .onSnapshot(snap => {
                 snap.docChanges().forEach(async ch => {
                     if (ch.type !== 'added') return;
+                    console.log('ПОЛУЧЕН СИГНАЛ:', ch.doc.data().type, 'от', ch.doc.data().from);
                     await this._handleSignal(ch.doc.data());
                     ch.doc.ref.delete().catch(() => { });
                 });
-            });
+            }, err => console.error('Ошибка сигнальной системы:', err));
 
         return true;
     }
 
     async _createPeer(pid, init) {
+        console.log('Создаем PeerConnection для участника:', pid, 'Initiator:', init);
         const pc = new RTCPeerConnection(ICE);
         this.peers[pid] = pc;
         this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
