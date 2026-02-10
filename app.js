@@ -76,35 +76,25 @@ const micManager = new MicManager();
    ═══════════════════════════════════ */
 const ICE = {
     iceServers: [
-        // STUN servers (Diverse set)
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
+        // STUN (только для получения IP)
         { urls: "stun:stun.services.mozilla.com" },
         { urls: "stun:stun.stunprotocol.org:3478" },
         { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun.ekiga.net" },
-        { urls: "stun:stun.ideasip.com" },
 
-        // TURN servers (Critical for Russia/NAT/Firewalls)
-        {
-            urls: "turn:openrelay.metered.ca:80",
-            username: "openrelayproject",
-            credential: "openrelayproject"
-        },
+        // TURN (Relay) — Самое важное для РФ
         {
             urls: [
-                "turn:openrelay.metered.ca:443",
-                "turn:openrelay.metered.ca:443?transport=tcp"
+                "turn:openrelay.metered.ca:80",
+                "turns:openrelay.metered.ca:443?transport=tcp"
             ],
             username: "openrelayproject",
             credential: "openrelayproject"
         },
-        // Дополнительный отказоустойчивый пул серверов
         {
             urls: [
                 "turn:relay.metered.ca:80",
                 "turn:relay.metered.ca:443",
-                "turn:relay.metered.ca:443?transport=tcp"
+                "turns:relay.metered.ca:443?transport=tcp"
             ],
             username: "c38fb767c944d156540b6183",
             credential: "5X+7Zz8oO9pX/HNo"
