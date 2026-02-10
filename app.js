@@ -47,479 +47,113 @@ class CallSounds {
 }
 
 /* ═══════════════════════════════════
-   MIC MANAGER
+   MODAL & UI HELPERS
    ═══════════════════════════════════ */
-class MicManager {
-    constructor() { this.permitted = false; }
-    async request(withVideo = false) {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
-            throw new Error('Браузер не поддерживает медиа.');
-        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1')
-            throw new Error('Нужен HTTPS.');
-        try {
-            const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
-            this.permitted = true; return s;
-        } catch (e) {
-            if (e.name === 'NotAllowedError') throw new Error('Доступ запрещён. Разрешите в настройках браузера.');
-            if (e.name === 'NotFoundError') throw new Error('Устройство не найдено.');
-            throw new Error('Ошибка: ' + e.message);
-        }
-    }
-    async preAuth() {
-        try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); this.permitted = true; s.getTracks().forEach(t => t.stop()); } catch (e) { }
-    }
-}
-const micManager = new MicManager();
 
 /* ═══════════════════════════════════
-   GROUP CALL (Mesh WebRTC + Video)
+   GROUP CALL (Google Meet Bridge)
    ═══════════════════════════════════ */
-const ICE = {
-    iceServers: [
-        { urls: "stun:142.250.31.127:19302" },
-        { urls: "stun:1.1.1.1:3478" },
-        // Массивный пул TURN (Только IP-адреса для обхода DPI/DNS)
-        {
-            urls: [
-                "turns:167.172.138.156:443?transport=tcp",
-                "turns:159.203.111.96:443?transport=tcp",
-                "turns:157.245.158.37:443?transport=tcp",
-                "turns:45.33.24.238:443?transport=tcp",
-                "turns:64.225.105.150:443?transport=tcp",
-                "turns:138.68.225.166:443?transport=tcp",
-                "turns:139.59.136.251:443?transport=tcp",
-                "turns:128.199.231.54:443?transport=tcp",
-                "turns:188.166.195.143:443?transport=tcp",
-                "turns:174.138.1.168:443?transport=tcp",
-                "turns:143.198.12.181:443?transport=tcp"
-            ],
-            username: "openrelayproject",
-            credential: "openrelayproject"
-        },
-        {
-            urls: [
-                "turns:relay.metered.ca:443?transport=tcp",
-                "turns:159.203.142.74:443?transport=tcp",
-                "turns:68.183.181.76:443?transport=tcp"
-            ],
-            username: "c38fb767c944d156540b6183",
-            credential: "5X+7Zz8oO9pX/HNo"
-        }
-    ],
-    iceCandidatePoolSize: 25,
-    iceTransportPolicy: 'all',
-    bundlePolicy: 'max-bundle',
-    rtcpMuxPolicy: 'require'
-};
-
-// ZAPRET LOGIC: SDP Munging + Chunking
-const forceRelaySDP = (sdp) => {
-    return sdp.split('\r\n').filter(line => {
-        if (line.indexOf('a=candidate') === 0) return line.indexOf('relay') !== -1;
-        return true;
-    }).join('\r\n');
-};
-
-const updateZapretUI = (step, active) => {
-    const el = document.getElementById(`ze-${step}`);
-    if (!el) return;
-    if (active) {
-        el.classList.add('active', 'pulse');
-    } else {
-        el.classList.remove('active', 'pulse');
-    }
-};
-
 class GroupCall {
     constructor(sounds) {
         this.sounds = sounds;
-        this.localStream = null;
-        this.peers = {};
-        this.audioElements = {};
         this.roomRef = null;
-        this.roomId = null;  // Track current room ID
+        this.roomId = null;
         this.signalUnsub = null;
         this.roomUnsub = null;
-        this.timerInterval = null;
-        this.seconds = 0;
-        this.muted = false;
-        this.camOff = false;
-        this.withVideo = false;
-        this.myUid = null;
         this.myUid = null;
         this._isActive = false;
-        this.stealthMode = false; // Режим Стелс-Туннеля
-        this.mediaRecorder = null;
-    }
-
-    async toggleStealth() {
-        this.stealthMode = !this.stealthMode;
-        console.log('--- Stealth Mode:', this.stealthMode ? 'ON' : 'OFF', '---');
-        const btn = document.getElementById('ze-stealth');
-        if (this.stealthMode) {
-            btn.classList.add('active', 'pulse');
-            this.startStealthBroadcasting();
-        } else {
-            btn.classList.remove('active', 'pulse');
-            if (this.mediaRecorder) this.mediaRecorder.stop();
-        }
-    }
-
-    async startStealthBroadcasting() {
-        if (!this.localStream) return;
-        // Нарезаем голос на куски по 400мс
-        this.mediaRecorder = new MediaRecorder(this.localStream, { mimeType: 'audio/webm;codecs=opus' });
-        this.mediaRecorder.ondataavailable = async (e) => {
-            if (e.data.size > 0 && this.stealthMode) {
-                const reader = new FileReader();
-                reader.readAsDataURL(e.data);
-                reader.onloadend = () => {
-                    const base64data = reader.result;
-                    this.roomRef.collection('stealth_relay').add({
-                        from: this.myUid,
-                        data: base64data,
-                        ts: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                };
-            }
-        };
-        this.mediaRecorder.start(400);
-
-        // Слушаем чужой голос через туннель
-        this.roomRef.collection('stealth_relay')
-            .where('from', '!=', this.myUid)
-            .orderBy('ts', 'desc').limit(1)
-            .onSnapshot(snap => {
-                snap.docChanges().forEach(ch => {
-                    if (ch.type === 'added' && this.stealthMode) {
-                        const audio = new Audio(ch.doc.data().data);
-                        audio.play().catch(() => { });
-                    }
-                });
-            });
     }
 
     async joinRoom(chatId, uid, withVideo = false) {
-        console.log('--- Начинаем вход в комнату звонка ---');
-        this.withVideo = withVideo;
-        try {
-            console.log('Запрашиваем доступ к медиа (audio/video)...');
-            this.localStream = await micManager.request(withVideo);
-            console.log('Медиа-поток получен успешно.');
-        } catch (e) {
-            console.error('Ошибка доступа к медиа:', e);
-            alert('❌ Не удалось получить доступ к микрофону:\n\n' + e.message);
-            return false;
-        }
-
+        console.log('--- Вход в комнату (Meet Bridge) ---');
         this.myUid = uid;
-        this.muted = false;
-        this.camOff = false;
-        this.updateMuteUI();
-        this.updateCamUI();
-
-        if (withVideo) {
-            const lv = document.getElementById('local-video');
-            lv.srcObject = this.localStream;
-            lv.classList.remove('hidden');
-            document.getElementById('btn-call-cam').classList.remove('hidden');
-            document.getElementById('call-overlay').classList.add('video-active');
-        }
-
-        // Mark as active
         this._isActive = true;
 
-        // Find or create room
+        // Поиск или создание комнаты
         const snap = await db.collection('chats').doc(chatId).collection('rooms')
             .where('status', '==', 'active').limit(1).get();
 
         if (snap.empty) {
-            // Create new room with me already in participants
             this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
                 status: 'active',
                 participants: [uid],
                 withVideo,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
+            // Инициатор - создаем встречу
+            this.startGoogleMeet();
         } else {
-            // Join existing room
             this.roomRef = snap.docs[0].ref;
             await this.roomRef.update({ participants: firebase.firestore.FieldValue.arrayUnion(uid) });
         }
 
-        // Store room ID to check in callbacks
         this.roomId = this.roomRef.id;
-        console.log('ID текущей комнаты:', this.roomId);
 
-        // Сразу включаем индикаторы Zapret Engine
-        updateZapretUI('frag', true);
-        updateZapretUI('mask', true);
-
-        // Watch participants
-        const currentRoomId = this.roomRef.id;
-        console.log('Подключаемся к прослушиванию участников...');
+        // Следим за состоянием комнаты
         this.roomUnsub = this.roomRef.onSnapshot(snap => {
-            console.log('Данные комнаты обновлены:', snap.data()?.participants);
-            // Guard: ignore if this listener is for old room
-            if (!this._isActive || this.roomId !== currentRoomId) {
-                console.log('Ignoring snapshot from old room');
-                return;
-            }
-
             const data = snap.data();
             if (!data || data.status === 'ended') { this.cleanup(); return; }
-            const parts = data.participants || [];
-
-            // If I'm alone and timer hasn't started, just wait (I'm the caller)
-            if (parts.length === 1 && parts[0] === this.myUid && this.seconds === 0) {
-                return;
-            }
-
-            for (const pid of parts) {
-                if (pid === this.myUid || this.peers[pid]) continue;
-                this.sounds.stopAll();
-                // Determine initiator: first participant in array is initiator
-                const shouldInitiate = parts.indexOf(this.myUid) < parts.indexOf(pid);
-                this._createPeer(pid, shouldInitiate);
-                this.updateCount(parts.length);
-            }
-            for (const pid of Object.keys(this.peers)) {
-                if (!parts.includes(pid)) { this._removePeer(pid); this.updateCount(parts.length); }
-            }
-            // If everyone left (and I was connected), end call
-            if (parts.length <= 1 && this.seconds > 0) this.endCall();
         });
 
-        // Listen for signals to me
-        console.log('Подписка на сигнальную систему Firebase...');
-        this.signalUnsub = this.roomRef.collection('signals').where('to', '==', uid)
+        // Слушаем ссылки на Meet
+        this.signalUnsub = this.roomRef.collection('signals').where('type', '==', 'google_meet_link')
             .onSnapshot(snap => {
-                snap.docChanges().forEach(async ch => {
-                    if (ch.type !== 'added') return;
-                    console.log('ПОЛУЧЕН СИГНАЛ:', ch.doc.data().type, 'от', ch.doc.data().from);
-                    await this._handleSignal(ch.doc.data());
-                    ch.doc.ref.delete().catch(() => { });
+                snap.docChanges().forEach(ch => {
+                    if (ch.type === 'added') {
+                        const link = ch.doc.data().link;
+                        const joinBtn = document.getElementById('btn-join-meet');
+                        joinBtn.onclick = () => window.open(link, '_blank');
+                        joinBtn.classList.remove('hidden');
+                        document.getElementById('call-status').innerText = 'Защищенный мост готов';
+                        this.sounds.playMsgReceived();
+                    }
                 });
-            }, err => console.error('Ошибка сигнальной системы:', err));
+            });
 
         return true;
     }
 
-    async _createPeer(pid, init) {
-        console.log('Создаем PeerConnection (Bypass Mode ON) для:', pid);
-        const pc = new RTCPeerConnection(ICE);
+    async startGoogleMeet() {
+        const link = prompt("Создаем защищенную линию через Google Meet.\n\n1. Сейчас откроется вкладка Google Meet.\n2. Нажмите 'Новая встреча' -> 'Начать встречу с мгновенным запуском'.\n3. Скопируйте ссылку и вставьте ее сюда:");
+        window.open('https://meet.google.com/new', '_blank');
 
-        // Если через 5 секунд статус все еще "new" или "connecting", 
-        // принудительно переключаем на Relay (только через сервер)
-        const watchdog = setTimeout(() => {
-            if (pc.iceConnectionState === 'new' || pc.iceConnectionState === 'checking') {
-                console.log('⚠️ Медленное соединение, включаем принудительный RELAY...');
-                pc.setConfiguration({ ...ICE, iceTransportPolicy: 'relay' });
-            }
-        }, 5000);
-
-        this.peers[pid] = pc;
-        this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
-
-        pc.ontrack = e => {
-            if (e.track.kind === 'video') {
-                const rv = document.getElementById('remote-video');
-                rv.srcObject = e.streams[0]; rv.classList.remove('hidden');
-                document.getElementById('call-overlay').classList.add('video-active');
-            } else {
-                let a = this.audioElements[pid];
-                if (!a) { a = document.createElement('audio'); a.autoplay = true; document.body.appendChild(a); this.audioElements[pid] = a; }
-                a.srcObject = e.streams[0];
-            }
-        };
-
-        pc.onicecandidate = e => {
-            if (e.candidate) {
-                console.log('ICE candidate:', e.candidate.candidate);
-                if (e.candidate.candidate.includes('relay')) {
-                    updateZapretUI('relay', true);
-                }
-                this.roomRef.collection('signals').add({
-                    from: this.myUid, to: pid, type: 'candidate',
-                    zapret_noise: Math.random(), // Шум для обмана DPI
-                    data: e.candidate.toJSON()
-                });
-            } else {
-                // Пустой кандидат как сигнал завершения сбора в режиме Zapret
-                updateZapretUI('mask', true);
-            }
-        };
-
-        const check = () => {
-            const s = pc.connectionState || pc.iceConnectionState;
-            console.log(`[ICE Status] ${pid}: ${s}`);
-
-            if ((s === 'connected' || s === 'completed') && !this.timerInterval) {
-                console.log('✅ Соединение установлено!');
-                this.sounds.stopAll(); this.sounds.playConnected(); this.onConnected();
-            }
-
-            if (s === 'connecting' || s === 'checking') {
-                document.getElementById('call-status').innerText = 'Подключение...';
-                updateZapretUI('frag', true);
-            } else if (s === 'failed' || s === 'disconnected') {
-                console.error('❌ Ошибка WebRTC:', s, 'Пробуем Ultra Bypass...');
-                document.getElementById('call-status').innerText = 'Прорыв блокировки...';
-                document.getElementById('bypass-tool-btn').style.display = 'flex'; // Показываем кнопку скачивания внешнего обхода
-                updateZapretUI('relay', false);
-
-                if (this.roomRef && this._isActive) {
-                    try {
-                        const newCfg = { ...ICE, iceTransportPolicy: 'relay' };
-                        pc.setConfiguration(newCfg);
-                        pc.createOffer({ iceRestart: true }).then(offer => {
-                            const munged = forceRelaySDP(offer.sdp);
-                            pc.setLocalDescription({ type: 'offer', sdp: munged });
-                            this.roomRef.collection('signals').add({
-                                from: this.myUid, to: pid, type: 'offer',
-                                zapret_ultra: true,
-                                data: { sdp: munged, type: offer.type }
-                            });
-                        });
-                    } catch (e) { console.error(e); }
-                }
-            }
-        };
-        pc.onconnectionstatechange = check;
-        pc.oniceconnectionstatechange = check;
-
-        if (init) {
-            // Динамическая задержка на основе UID для предотвращения коллизий
-            const waitTime = this.myUid < pid ? 200 : 800;
-            await new Promise(r => setTimeout(r, waitTime));
-
-            const offer = await pc.createOffer();
-            updateZapretUI('frag', true);
-            updateZapretUI('mask', true);
-            const mungedSDP = forceRelaySDP(offer.sdp);
-            await pc.setLocalDescription({ type: 'offer', sdp: mungedSDP });
-
-            const signalId = Math.random().toString(36).substring(7);
+        if (link && link.includes('meet.google.com')) {
             await this.roomRef.collection('signals').add({
-                from: this.myUid, to: pid, type: 'offer',
-                zapret_id: signalId,
-                data: { sdp: mungedSDP, type: offer.type }
+                from: this.myUid,
+                type: 'google_meet_link',
+                link: link.trim()
             });
+            document.getElementById('call-status').innerText = 'Линия создана. Ожидание собеседника...';
         }
-    }
-
-    async _handleSignal(sig) {
-        if (!this.peers[sig.from]) {
-            console.log('Создаем пира по входящему сигналу:', sig.from);
-            await this._createPeer(sig.from, false);
-        }
-
-        const pc = this.peers[sig.from];
-        if (!pc) return;
-
-        try {
-            if (sig.type === 'offer') {
-                const isPolite = this.myUid < sig.from;
-                if (pc.signalingState !== 'stable') {
-                    if (!isPolite) {
-                        console.log('Игнорируем входящий оффер (я главный)');
-                        return;
-                    }
-                    console.log('Откатываемся (я вежливый) для принятия оффера');
-                    await pc.setLocalDescription({ type: 'rollback' });
-                }
-
-                await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
-                const answer = await pc.createAnswer();
-                updateZapretUI('frag', true);
-                updateZapretUI('mask', true);
-                const mungedAnswer = forceRelaySDP(answer.sdp);
-                await pc.setLocalDescription({ type: 'answer', sdp: mungedAnswer });
-                await this.roomRef.collection('signals').add({
-                    from: this.myUid, to: sig.from, type: 'answer',
-                    data: { sdp: mungedAnswer, type: answer.type }
-                });
-            } else if (sig.type === 'answer') {
-                if (pc.signalingState === 'have-local-offer') {
-                    await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
-                }
-            } else if (sig.type === 'candidate') {
-                await pc.addIceCandidate(new RTCIceCandidate(sig.data)).catch(e => {
-                    console.warn('Ошибка кандидата:', e);
-                });
-            }
-        } catch (e) {
-            console.error('Ошибка обработки сигнала:', e);
-        }
-    }
-
-    _removePeer(pid) {
-        if (this.peers[pid]) { this.peers[pid].close(); delete this.peers[pid]; }
-        if (this.audioElements[pid]) { this.audioElements[pid].remove(); delete this.audioElements[pid]; }
-    }
-
-    toggleMute() { if (!this.localStream) return; this.muted = !this.muted; this.localStream.getAudioTracks().forEach(t => { t.enabled = !this.muted; }); this.updateMuteUI(); }
-    toggleCam() { if (!this.localStream) return; const vt = this.localStream.getVideoTracks(); if (!vt.length) return; this.camOff = !this.camOff; vt.forEach(t => { t.enabled = !this.camOff; }); this.updateCamUI(); }
-    updateMuteUI() { const b = document.getElementById('btn-call-mute'); b.innerText = this.muted ? '🔇' : '🎙️'; b.classList.toggle('muted', this.muted); }
-    updateCamUI() { const b = document.getElementById('btn-call-cam'); b.innerText = this.camOff ? '🚫' : '📷'; b.classList.toggle('cam-off', this.camOff); }
-    updateCount(c) { const el = document.getElementById('call-status'); if (el && this.timerInterval) el.innerText = `Участников: ${c}`; }
-
-    onConnected() {
-        document.getElementById('call-status').innerText = 'Подключено';
-        document.getElementById('call-timer').classList.remove('hidden');
-        this.seconds = 0;
-        if (this.timerInterval) clearInterval(this.timerInterval);
-        this.timerInterval = setInterval(() => {
-            this.seconds++;
-            document.getElementById('call-timer').innerText = String(Math.floor(this.seconds / 60)).padStart(2, '0') + ':' + String(this.seconds % 60).padStart(2, '0');
-        }, 1000);
     }
 
     async endCall() {
         this.sounds.playHangup();
-
-        // Mark as inactive FIRST to prevent listeners from processing events
         this._isActive = false;
-
-        // Unsubscribe before updating Firestore to avoid race condition
-        if (this.signalUnsub) { this.signalUnsub(); this.signalUnsub = null; }
-        if (this.roomUnsub) { this.roomUnsub(); this.roomUnsub = null; }
-
-        // Now update Firestore
         if (this.roomRef) {
             await this.roomRef.update({
                 participants: firebase.firestore.FieldValue.arrayRemove(this.myUid),
                 status: 'ended'
             }).catch(() => { });
         }
-
         this.cleanup();
     }
 
     cleanup() {
         this._isActive = false;
         this.sounds.stopAll();
-        if (this.timerInterval) clearInterval(this.timerInterval);
-        this.timerInterval = null;
-        this.seconds = 0;
-        if (this.localStream) this.localStream.getTracks().forEach(t => t.stop());
-        this.localStream = null;
-        Object.keys(this.peers).forEach(id => this._removePeer(id));
-        // Unsubscribe if not already done
         if (this.signalUnsub) { this.signalUnsub(); this.signalUnsub = null; }
         if (this.roomUnsub) { this.roomUnsub(); this.roomUnsub = null; }
         this.roomRef = null;
         this.roomId = null;
         this.myUid = null;
-        const rv = document.getElementById('remote-video'), lv = document.getElementById('local-video');
-        if (rv) { rv.srcObject = null; rv.classList.add('hidden'); }
-        if (lv) { lv.srcObject = null; lv.classList.add('hidden'); }
-        document.getElementById('btn-call-cam').classList.add('hidden');
-        document.getElementById('call-overlay').classList.remove('video-active');
+        document.getElementById('btn-join-meet').classList.add('hidden');
         document.getElementById('call-overlay').classList.add('hidden');
     }
 
     get isActive() { return !!this.roomRef; }
+    toggleMute() { }
+    toggleCam() { }
 }
 
 /* ═══════════════════════════════════
@@ -550,7 +184,6 @@ class Vinychat {
     _setupMobile() {
         const h = async () => {
             if (this.sounds.ctx && this.sounds.ctx.state === 'suspended') this.sounds.ctx.resume();
-            await micManager.preAuth();
             document.removeEventListener('touchstart', h);
             document.removeEventListener('click', h);
         };

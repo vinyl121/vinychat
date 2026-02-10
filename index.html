@@ -107,45 +107,22 @@
 
     <!-- CALL OVERLAY -->
     <div id="call-overlay" class="call-overlay hidden">
-        <!-- Video containers -->
-        <video id="remote-video" class="remote-video hidden" autoplay playsinline></video>
-        <video id="local-video" class="local-video hidden" autoplay playsinline muted></video>
-
         <div class="call-card" id="call-card">
             <div class="call-pulse">
-                <div class="call-avatar-big" id="call-avatar">📞</div>
+                <div class="call-avatar-big" id="call-avatar">🍷</div>
             </div>
-            <div class="call-name" id="call-name">Звонок</div>
-            <div class="call-status" id="call-status">Соединение...</div>
-            <div class="call-timer hidden" id="call-timer">00:00</div>
-
-            <div id="zapret-engine" class="zapret-engine-mini">
-                <div class="ze-label">Zapret Bypass Active</div>
-                <div class="ze-indicators">
-                    <div id="ze-frag" class="ze-dot" title="Split Packet Mode">Frag</div>
-                    <div id="ze-mask" class="ze-dot" title="TLS Masking">Mask</div>
-                    <div id="ze-relay" class="ze-dot" title="Relay Tunnel">Relay</div>
-                    <div id="ze-stealth" class="ze-dot stealth-btn" onclick="callManager.groupCall.toggleStealth()"
-                        title="Ultra-Stealth Mode (Firestore Relay)">Stealth</div>
-                </div>
-            </div>
+            <div class="call-name" id="call-name">Собеседник</div>
+            <div class="call-status" id="call-status">Подготовка защищенного звонка...</div>
         </div>
 
         <div class="call-controls">
-            <div class="call-btn-wrap" id="bypass-tool-btn" style="display:none;">
-                <a href="start_bypass.bat" download class="call-btn call-bypass">⚡</a>
-                <span>Обход (Fix)</span>
+            <div class="call-btn-wrap" id="meet-join-section">
+                <button id="btn-join-meet" style="background: #1a73e8;" class="call-btn hidden"
+                    title="Войти в Google Meet">🔗</button>
+                <span id="meet-label">Войти в Google Meet</span>
             </div>
             <div class="call-btn-wrap">
-                <button id="btn-call-mute" class="call-btn call-mute">🎙️</button>
-                <span>Микрофон</span>
-            </div>
-            <div class="call-btn-wrap">
-                <button id="btn-call-cam" class="call-btn call-cam hidden">�</button>
-                <span id="label-cam">Камера</span>
-            </div>
-            <div class="call-btn-wrap">
-                <button id="btn-call-end" class="call-btn call-end">📵</button>
+                <button id="btn-call-end" class="call-btn call-end">✕</button>
                 <span>Завершить</span>
             </div>
         </div>
