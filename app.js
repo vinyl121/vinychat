@@ -1,6 +1,6 @@
 /**
- * Vinychat Engine 2.1 - FULL REPAIR
- * Fixed Search, Chat Creation, and Group Messaging
+ * Vinychat Engine 2.2 - PROD FIX
+ * Improved error handling for GitHub Pages & Live Hosting
  */
 
 const firebaseConfig = {
@@ -13,7 +13,12 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-firebase.initializeApp(firebaseConfig);
+try {
+    firebase.initializeApp(firebaseConfig);
+} catch (e) {
+    console.error("Firebase init error:", e);
+}
+
 const auth = firebase.auth();
 const db = firebase.firestore();
 const storage = firebase.storage();
@@ -22,7 +27,8 @@ class Vinychat {
     constructor() {
         this.currentUser = null;
         this.activeChatId = null;
-        this.usersCache = {}; // Храним данные пользователей, чтобы не запрашивать их каждый раз
+        this.allChats = [];
+        this.usersCache = {};
         this.initElements();
         this.initEvents();
         this.listenAuthState();
@@ -45,9 +51,7 @@ class Vinychat {
         };
         this.btn = {
             send: document.getElementById('btn-send'),
-            attach: document.getElementById('btn-attachment'),
-            voiceMsg: document.getElementById('btn-voice-msg'),
-            voiceCall: document.getElementById('btn-voice-call')
+            attach: document.getElementById('btn-attachment')
         };
         this.areas = {
             chatList: document.getElementById('chat-list'),
@@ -60,7 +64,7 @@ class Vinychat {
     }
 
     initEvents() {
-        // Auth Toggles
+        // Forms Toggle
         document.getElementById('show-register').onclick = (e) => {
             e.preventDefault();
             document.getElementById('login-form').classList.add('hidden');
@@ -98,10 +102,11 @@ class Vinychat {
                 this.switchScreen('auth');
                 this.areas.chatList.innerHTML = '';
             }
+        }, err => {
+            alert("Ошибка Auth: " + err.message);
         });
     }
 
-    // --- Auth Logic ---
     async handleRegister() {
         const username = this.inputs.regUser.value.trim();
         const email = this.inputs.regEmail.value.trim();
@@ -136,56 +141,51 @@ class Vinychat {
                 document.getElementById('current-username').innerText = data.username;
                 document.getElementById('current-user-avatar').innerText = data.avatar;
             }
-        });
+        }).catch(e => console.error("User data load error:", e));
     }
 
-    // --- Chat Management ---
     loadChats() {
         db.collection('chats')
             .where('participants', 'array-contains', this.currentUser.uid)
             .onSnapshot(snapshot => {
                 this.allChats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 this.renderChatList();
+            }, err => {
+                alert("Ошибка загрузки чатов (проверьте правила Firestore): " + err.message);
             });
     }
 
-    async renderChatList(searchResults = []) {
+    renderChatList(searchResults = []) {
         this.areas.chatList.innerHTML = '';
 
-        // 1. Отображаем результаты поиска (если есть)
         if (searchResults.length > 0) {
             const header = document.createElement('div');
             header.className = 'status';
             header.style.padding = '10px 20px';
-            header.innerText = 'Результаты поиска:';
+            header.innerText = 'Найдено:';
             this.areas.chatList.appendChild(header);
 
             searchResults.forEach(user => {
                 const item = this.createChatItemUI({
                     name: user.username,
                     avatar: user.avatar,
-                    lastMsg: 'Нажмите, чтобы начать чат',
+                    lastMsg: 'Написать...',
                     onClick: () => this.startPrivateChat(user)
                 });
                 this.areas.chatList.appendChild(item);
             });
-
-            const divider = document.createElement('hr');
-            divider.style.opacity = '0.1';
-            divider.style.margin = '10px 0';
-            this.areas.chatList.appendChild(divider);
+            this.areas.chatList.appendChild(document.createElement('hr'));
         }
 
-        // 2. Отображаем существующие чаты
         if (this.allChats && this.allChats.length > 0) {
-            for (const chat of this.allChats) {
-                let chatName = chat.name;
+            this.allChats.forEach(async chat => {
+                let chatName = chat.name || "Групповой чат";
                 let avatar = '👥';
 
                 if (chat.type === 'personal') {
                     const otherUid = chat.participants.find(id => id !== this.currentUser.uid);
                     const otherUser = await this.getUserInfo(otherUid);
-                    chatName = otherUser ? otherUser.username : 'Пользователь';
+                    chatName = otherUser ? otherUser.username : 'Загрузка...';
                     avatar = otherUser ? otherUser.avatar : '?';
                 }
 
@@ -193,12 +193,12 @@ class Vinychat {
                     id: chat.id,
                     name: chatName,
                     avatar: avatar,
-                    lastMsg: chat.lastMessage?.text || 'Нет сообщений',
                     active: this.activeChatId === chat.id,
+                    lastMsg: chat.lastMessage?.text || 'Нет сообщений',
                     onClick: () => this.openChat(chat.id, { ...chat, name: chatName, avatar: avatar })
                 });
                 this.areas.chatList.appendChild(item);
-            }
+            });
         }
     }
 
@@ -218,11 +218,13 @@ class Vinychat {
 
     async getUserInfo(uid) {
         if (this.usersCache[uid]) return this.usersCache[uid];
-        const doc = await db.collection('users').doc(uid).get();
-        if (doc.exists) {
-            this.usersCache[uid] = doc.data();
-            return doc.data();
-        }
+        try {
+            const doc = await db.collection('users').doc(uid).get();
+            if (doc.exists) {
+                this.usersCache[uid] = doc.data();
+                return doc.data();
+            }
+        } catch (e) { return null; }
         return null;
     }
 
@@ -233,44 +235,44 @@ class Vinychat {
             return;
         }
 
-        const snapshot = await db.collection('users')
-            .where('searchKeywords', '>=', term)
-            .where('searchKeywords', '<=', term + '\uf8ff')
-            .limit(5)
-            .get();
+        try {
+            const snapshot = await db.collection('users')
+                .where('searchKeywords', '>=', term)
+                .where('searchKeywords', '<=', term + '\uf8ff')
+                .limit(10)
+                .get();
 
-        const results = snapshot.docs
-            .map(doc => doc.data())
-            .filter(u => u.uid !== this.currentUser.uid);
+            const results = snapshot.docs
+                .map(doc => doc.data())
+                .filter(u => u.uid !== this.currentUser.uid);
 
-        this.renderChatList(results);
+            this.renderChatList(results);
+        } catch (e) {
+            console.error("Search error:", e);
+        }
     }
 
     async startPrivateChat(otherUser) {
-        // Проверяем, есть ли уже чат с этим пользователем
-        const existing = this.allChats?.find(c =>
+        const existing = this.allChats.find(c =>
             c.type === 'personal' && c.participants.includes(otherUser.uid)
         );
 
         if (existing) {
             this.openChat(existing.id, { ...existing, name: otherUser.username, avatar: otherUser.avatar });
-            this.inputs.search.value = '';
-            this.renderChatList();
-            return;
+        } else {
+            try {
+                const docRef = await db.collection('chats').add({
+                    type: 'personal',
+                    participants: [this.currentUser.uid, otherUser.uid],
+                    lastMessage: { text: "Чат создан" },
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                this.openChat(docRef.id, { id: docRef.id, name: otherUser.username, avatar: otherUser.avatar });
+            } catch (e) { alert("Ошибка при создании чата: " + e.message); }
         }
-
-        // Создаем новый чат
-        const docRef = await db.collection('chats').add({
-            type: 'personal',
-            participants: [this.currentUser.uid, otherUser.uid],
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-
-        this.openChat(docRef.id, { id: docRef.id, name: otherUser.username, avatar: otherUser.avatar, type: 'personal' });
         this.inputs.search.value = '';
     }
 
-    // --- Message Logic ---
     openChat(chatId, chatData) {
         this.activeChatId = chatId;
         this.areas.noChat.classList.add('hidden');
@@ -285,9 +287,9 @@ class Vinychat {
             .orderBy('timestamp', 'asc')
             .onSnapshot(snapshot => {
                 this.renderMessages(snapshot.docs);
+            }, err => {
+                alert("Ошибка сообщений: " + err.message);
             });
-
-        this.renderChatList();
     }
 
     renderMessages(docs) {
@@ -298,7 +300,7 @@ class Vinychat {
             const div = document.createElement('div');
             div.className = `message ${isMine ? 'mine' : 'other'}`;
 
-            let content = `<div class="msg-text">${this.escapeHTML(msg.text)}</div>`;
+            let content = `<div class="msg-text">${this.escapeHTML(msg.text || "")}</div>`;
             if (msg.fileUrl) {
                 if (msg.fileType?.startsWith('image/')) {
                     content = `<img src="${msg.fileUrl}" class="photo-attachment" onclick="window.open('${msg.fileUrl}')">` + content;
@@ -316,28 +318,26 @@ class Vinychat {
         this.areas.messages.scrollTop = this.areas.messages.scrollHeight;
     }
 
-    async sendMessage(extra = {}) {
+    async sendMessage() {
         const text = this.inputs.msg.value.trim();
-        if (!text && !extra.fileUrl) return;
-        if (!this.activeChatId) return alert('Выберите чат');
+        if (!text || !this.activeChatId) return;
 
+        const chatId = this.activeChatId;
         const messageData = {
             senderId: this.currentUser.uid,
             text: text,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-            ...extra
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
         };
 
         this.inputs.msg.value = '';
 
         try {
-            await db.collection('chats').doc(this.activeChatId).collection('messages').add(messageData);
-            // Обновляем последнее сообщение в чате
-            await db.collection('chats').doc(this.activeChatId).update({
-                lastMessage: { text: text || 'Файл', senderId: this.currentUser.uid },
+            await db.collection('chats').doc(chatId).collection('messages').add(messageData);
+            await db.collection('chats').doc(chatId).update({
+                lastMessage: { text: text, senderId: this.currentUser.uid },
                 lastActivity: firebase.firestore.FieldValue.serverTimestamp()
             });
-        } catch (err) { console.error(err); }
+        } catch (err) { alert("Ошибка отправки: " + err.message); }
     }
 
     async handleFileUpload(file) {
@@ -349,13 +349,21 @@ class Vinychat {
             const ref = storage.ref(`chats/${this.activeChatId}/${Date.now()}_${file.name}`);
             const snap = await ref.put(file);
             const url = await snap.ref.getDownloadURL();
-            await this.sendMessage({ fileUrl: url, fileName: file.name, fileType: file.type });
+
+            await db.collection('chats').doc(this.activeChatId).collection('messages').add({
+                senderId: this.currentUser.uid,
+                text: "Отправлен файл",
+                fileUrl: url,
+                fileName: file.name,
+                fileType: file.type,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
         } catch (err) { alert('Ошибка загрузки: ' + err.message); }
         finally { btn.innerText = '📎'; }
     }
 
     showGroupModal() {
-        const name = prompt('Введите название группы:');
+        const name = prompt('Название группы:');
         if (name) {
             db.collection('chats').add({
                 name: name,
@@ -363,11 +371,13 @@ class Vinychat {
                 participants: [this.currentUser.uid],
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 lastMessage: { text: 'Группа создана' }
-            }).then(doc => this.openChat(doc.id, { id: doc.id, name: name, avatar: '👥', type: 'group' }));
+            }).then(doc => this.openChat(doc.id, { id: doc.id, name: name, avatar: '👥' }))
+                .catch(e => alert("Ошибка создания группы: " + e.message));
         }
     }
 
     escapeHTML(str) {
+        if (!str) return "";
         return str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
     }
 
