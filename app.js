@@ -77,31 +77,31 @@ const micManager = new MicManager();
 const ICE = {
     iceServers: [
         // STUN (базовый поиск IP)
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun.services.mozilla.com" },
+        { urls: "stun:142.250.31.127:19302" },
+        { urls: "stun:1.1.1.1:3478" },
 
-        // TURN (Relay) — Прямой проброс через 443 порт (HTTPS)
+        // TURN-TLS (Relay через 443 порт, маскировка под HTTPS)
+        // Это и есть «вшитый» обход блокировок
         {
             urls: [
-                "turn:openrelay.metered.ca:80",
+                "turns:167.172.138.156:443?transport=tcp",
                 "turns:openrelay.metered.ca:443?transport=tcp"
             ],
             username: "openrelayproject",
             credential: "openrelayproject"
         },
-        // Резервный пул с другими учетными данными
         {
             urls: [
-                "turn:relay.metered.ca:80",
                 "turns:relay.metered.ca:443?transport=tcp"
             ],
             username: "c38fb767c944d156540b6183",
             credential: "5X+7Zz8oO9pX/HNo"
         }
     ],
-    iceCandidatePoolSize: 10,
-    iceTransportPolicy: 'all', // Изначально пробуем всё
-    bundlePolicy: 'max-bundle'
+    iceCandidatePoolSize: 20,
+    iceTransportPolicy: 'all',
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require'
 };
 
 class GroupCall {
@@ -226,8 +226,18 @@ class GroupCall {
     }
 
     async _createPeer(pid, init) {
-        console.log('Создаем PeerConnection для участника:', pid, 'Initiator:', init);
+        console.log('Создаем PeerConnection (Bypass Mode ON) для:', pid);
         const pc = new RTCPeerConnection(ICE);
+
+        // Если через 5 секунд статус все еще "new" или "connecting", 
+        // принудительно переключаем на Relay (только через сервер)
+        const watchdog = setTimeout(() => {
+            if (pc.iceConnectionState === 'new' || pc.iceConnectionState === 'checking') {
+                console.log('⚠️ Медленное соединение, включаем принудительный RELAY...');
+                pc.setConfiguration({ ...ICE, iceTransportPolicy: 'relay' });
+            }
+        }, 5000);
+
         this.peers[pid] = pc;
         this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
 
@@ -285,18 +295,38 @@ class GroupCall {
     }
 
     async _handleSignal(sig) {
-        if (sig.type === 'offer') {
-            if (!this.peers[sig.from]) await this._createPeer(sig.from, false);
-            const pc = this.peers[sig.from]; if (!pc) return;
-            await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
-            const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
-            await this.roomRef.collection('signals').add({ from: this.myUid, to: sig.from, type: 'answer', data: { sdp: answer.sdp, type: answer.type } });
-        } else if (sig.type === 'answer') {
-            const pc = this.peers[sig.from];
-            if (pc && !pc.currentRemoteDescription) await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
-        } else if (sig.type === 'candidate') {
-            const pc = this.peers[sig.from];
-            if (pc) await pc.addIceCandidate(new RTCIceCandidate(sig.data));
+        if (!this.peers[sig.from]) {
+            console.log('Создаем пира по входящему сигналу:', sig.from);
+            await this._createPeer(sig.from, false);
+        }
+
+        const pc = this.peers[sig.from];
+        if (!pc) return;
+
+        try {
+            if (sig.type === 'offer') {
+                if (pc.signalingState !== 'stable') {
+                    console.log('Пропускаем оффер: состояние не stable (', pc.signalingState, ')');
+                    return;
+                }
+                await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                await this.roomRef.collection('signals').add({
+                    from: this.myUid, to: sig.from, type: 'answer',
+                    data: { sdp: answer.sdp, type: answer.type }
+                });
+            } else if (sig.type === 'answer') {
+                if (pc.signalingState === 'have-local-offer') {
+                    await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
+                }
+            } else if (sig.type === 'candidate') {
+                await pc.addIceCandidate(new RTCIceCandidate(sig.data)).catch(e => {
+                    console.warn('Ошибка кандидата:', e);
+                });
+            }
+        } catch (e) {
+            console.error('Ошибка обработки сигнала:', e);
         }
     }
 
