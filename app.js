@@ -76,12 +76,11 @@ const micManager = new MicManager();
    ═══════════════════════════════════ */
 const ICE = {
     iceServers: [
-        // STUN (только для получения IP)
-        { urls: "stun:stun.services.mozilla.com" },
-        { urls: "stun:stun.stunprotocol.org:3478" },
+        // STUN (базовый поиск IP)
         { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun.services.mozilla.com" },
 
-        // TURN (Relay) — Самое важное для РФ
+        // TURN (Relay) — Прямой проброс через 443 порт (HTTPS)
         {
             urls: [
                 "turn:openrelay.metered.ca:80",
@@ -90,10 +89,10 @@ const ICE = {
             username: "openrelayproject",
             credential: "openrelayproject"
         },
+        // Резервный пул с другими учетными данными
         {
             urls: [
                 "turn:relay.metered.ca:80",
-                "turn:relay.metered.ca:443",
                 "turns:relay.metered.ca:443?transport=tcp"
             ],
             username: "c38fb767c944d156540b6183",
@@ -101,7 +100,7 @@ const ICE = {
         }
     ],
     iceCandidatePoolSize: 10,
-    iceTransportPolicy: 'all',
+    iceTransportPolicy: 'all', // Изначально пробуем всё
     bundlePolicy: 'max-bundle'
 };
 
@@ -263,18 +262,16 @@ class GroupCall {
             if (s === 'connecting' || s === 'checking') {
                 document.getElementById('call-status').innerText = 'Подключение...';
             } else if (s === 'failed' || s === 'disconnected') {
-                console.error('❌ Ошибка WebRTC:', s, 'Пробуем перезапуск ICE...');
+                console.error('❌ Ошибка WebRTC:', s, 'Пробуем агрессивный обход...');
                 document.getElementById('call-status').innerText = 'Обход блокировок...';
-
-                // Если соединение упало, пробуем перезапустить процесс поиска кандидатов
-                if (init && this.roomRef) {
-                    pc.createOffer({ iceRestart: true }).then(offer => {
-                        pc.setLocalDescription(offer);
-                        this.roomRef.collection('signals').add({
-                            from: this.myUid, to: pid, type: 'offer',
-                            data: { sdp: offer.sdp, type: offer.type }
+                if (init && this.roomRef && this._isActive) {
+                    try {
+                        pc.setConfiguration({ ...ICE, iceTransportPolicy: 'relay' });
+                        pc.createOffer({ iceRestart: true }).then(offer => {
+                            pc.setLocalDescription(offer);
+                            this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'offer', data: { sdp: offer.sdp, type: offer.type } });
                         });
-                    });
+                    } catch (e) { console.error(e); }
                 }
             }
         };
