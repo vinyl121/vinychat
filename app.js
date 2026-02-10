@@ -74,7 +74,15 @@ const micManager = new MicManager();
 /* ═══════════════════════════════════
    GROUP CALL (Mesh WebRTC + Video)
    ═══════════════════════════════════ */
-const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] };
+const ICE = {
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun.stunprotocol.org:3478" },
+        { urls: "stun:stun.voip.blackberry.com:3478" },
+        { urls: "stun:openrelay.metered.ca:80" }
+    ]
+};
 
 class GroupCall {
     constructor(sounds) {
@@ -95,8 +103,12 @@ class GroupCall {
 
     async joinRoom(chatId, uid, withVideo = false) {
         this.withVideo = withVideo;
-        try { this.localStream = await micManager.request(withVideo); }
-        catch (e) { alert(e.message); return false; }
+        try {
+            this.localStream = await micManager.request(withVideo);
+        } catch (e) {
+            alert('❌ Не удалось получить доступ к микрофону:\n\n' + e.message + '\n\nПроверьте:\n• Разрешения браузера\n• HTTPS соединение\n• Наличие микрофона');
+            return false;
+        }
 
         this.myUid = uid;
         this.muted = false;
@@ -136,11 +148,15 @@ class GroupCall {
             if (!data || data.status === 'ended') { this.cleanup(); return; }
             const parts = data.participants || [];
 
+            // If I'm alone and timer hasn't started, just wait (I'm the caller)
+            if (parts.length === 1 && parts[0] === this.myUid && this.seconds === 0) {
+                return;
+            }
+
             for (const pid of parts) {
                 if (pid === this.myUid || this.peers[pid]) continue;
                 this.sounds.stopAll();
                 // Determine initiator: first participant in array is initiator
-                // This ensures room creator always sends offer
                 const shouldInitiate = parts.indexOf(this.myUid) < parts.indexOf(pid);
                 this._createPeer(pid, shouldInitiate);
                 this.updateCount(parts.length);
@@ -148,6 +164,7 @@ class GroupCall {
             for (const pid of Object.keys(this.peers)) {
                 if (!parts.includes(pid)) { this._removePeer(pid); this.updateCount(parts.length); }
             }
+            // If everyone left (and I was connected), end call
             if (parts.length <= 1 && this.seconds > 0) this.endCall();
         });
 
