@@ -334,17 +334,16 @@ class GroupCall {
         pc.oniceconnectionstatechange = check;
 
         if (init) {
-            // Небольшая задержка для инициатора, чтобы избежать ошибки "stable"
-            await new Promise(r => setTimeout(r, 500));
+            // Динамическая задержка на основе UID для предотвращения коллизий
+            const waitTime = this.myUid < pid ? 200 : 800;
+            await new Promise(r => setTimeout(r, waitTime));
+
             const offer = await pc.createOffer();
-            // Применяем "вшитый" обход (фильтруем SDP перед отправкой)
-            // ПРИМЕНЯЕМ ZAPRET-ФРАГМЕНТАЦИЮ (SDP Chunking)
             updateZapretUI('frag', true);
             updateZapretUI('mask', true);
             const mungedSDP = forceRelaySDP(offer.sdp);
             await pc.setLocalDescription({ type: 'offer', sdp: mungedSDP });
 
-            // Вместо одной записи делаем "шум" и фрагментацию
             const signalId = Math.random().toString(36).substring(7);
             await this.roomRef.collection('signals').add({
                 from: this.myUid, to: pid, type: 'offer',
@@ -365,14 +364,18 @@ class GroupCall {
 
         try {
             if (sig.type === 'offer') {
+                const isPolite = this.myUid < sig.from;
                 if (pc.signalingState !== 'stable') {
-                    console.log('Пропускаем оффер: состояние не stable (', pc.signalingState, ')');
-                    return;
+                    if (!isPolite) {
+                        console.log('Игнорируем входящий оффер (я главный)');
+                        return;
+                    }
+                    console.log('Откатываемся (я вежливый) для принятия оффера');
+                    await pc.setLocalDescription({ type: 'rollback' });
                 }
+
                 await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
                 const answer = await pc.createAnswer();
-                // Применяем фильтр "вшитого" обхода к ответу
-                // Применяем ZAPRET-фрагментацию для ответа
                 updateZapretUI('frag', true);
                 updateZapretUI('mask', true);
                 const mungedAnswer = forceRelaySDP(answer.sdp);
