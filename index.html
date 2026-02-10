@@ -7,7 +7,6 @@
     <title>Vinychat</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="manifest" crossorigin="use-credentials">
     <meta name="theme-color" content="#0f0e17">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -41,8 +40,6 @@
     <!-- CHAT -->
     <div id="chat-screen" class="screen">
         <div class="chat-layout">
-
-            <!-- SIDEBAR -->
             <aside class="sidebar" id="sidebar">
                 <div class="profile-bar">
                     <div class="profile-left">
@@ -61,7 +58,6 @@
                 <button id="btn-create-group" class="create-group-btn">+ Создать группу</button>
             </aside>
 
-            <!-- MAIN -->
             <main class="main-area" id="main-area">
                 <div id="no-chat-selected" class="welcome-screen">
                     <div class="welcome-content">
@@ -83,6 +79,7 @@
                         </div>
                         <div class="header-actions">
                             <button id="btn-voice-call" class="header-btn" title="Голосовой вызов">📞</button>
+                            <button id="btn-video-call" class="header-btn" title="Видеозвонок">📹</button>
                             <button id="btn-chat-settings" class="header-btn" title="Настройки">⚙️</button>
                         </div>
                     </header>
@@ -110,19 +107,30 @@
 
     <!-- CALL OVERLAY -->
     <div id="call-overlay" class="call-overlay hidden">
-        <div class="call-card">
+        <!-- Video containers -->
+        <video id="remote-video" class="remote-video hidden" autoplay playsinline></video>
+        <video id="local-video" class="local-video hidden" autoplay playsinline muted></video>
+
+        <div class="call-card" id="call-card">
             <div class="call-pulse">
                 <div class="call-avatar-big" id="call-avatar">📞</div>
             </div>
             <div class="call-name" id="call-name">Звонок</div>
             <div class="call-status" id="call-status">Соединение...</div>
             <div class="call-timer hidden" id="call-timer">00:00</div>
-            <div class="call-buttons">
+        </div>
+
+        <div class="call-controls">
+            <div class="call-btn-wrap">
                 <button id="btn-call-mute" class="call-btn call-mute">🎙️</button>
-                <button id="btn-call-end" class="call-btn call-end">📵</button>
-            </div>
-            <div class="call-labels">
                 <span>Микрофон</span>
+            </div>
+            <div class="call-btn-wrap">
+                <button id="btn-call-cam" class="call-btn call-cam hidden">�</button>
+                <span id="label-cam">Камера</span>
+            </div>
+            <div class="call-btn-wrap">
+                <button id="btn-call-end" class="call-btn call-end">📵</button>
                 <span>Завершить</span>
             </div>
         </div>
@@ -134,7 +142,7 @@
             <div class="incoming-icon">📞</div>
             <div>
                 <div class="incoming-name" id="incoming-name">Звонок</div>
-                <div class="incoming-label">Входящий вызов</div>
+                <div class="incoming-label" id="incoming-label">Входящий вызов</div>
             </div>
         </div>
         <div class="incoming-actions">

@@ -1,6 +1,8 @@
 /**
- * Vinychat 4.3 — GROUP CALLS (Mesh WebRTC)
- * Multiple participants in one call via mesh peer connections
+ * Vinychat 5.0 — VIDEO CALLS + CANCEL FIX
+ * - Video call support (camera toggle)
+ * - Fixed: call cancellation properly dismisses incoming banner
+ * - Mesh WebRTC for group calls
  */
 
 const firebaseConfig = {
@@ -38,74 +40,48 @@ class CallSounds {
     startRinging() { this.stopAll(); this.stopped = false; const r = () => { this._beep(587, 0.15, 0.18); setTimeout(() => this._beep(659, 0.15, 0.18), 200); setTimeout(() => this._beep(784, 0.2, 0.18), 400); }; r(); this.ringInterval = setInterval(r, 2000); }
     playConnected() { this.stopAll(); this.stopped = false; this._beep(523, 0.15, 0.1); setTimeout(() => this._beep(659, 0.15, 0.1), 100); setTimeout(() => this._beep(784, 0.2, 0.1), 200); }
     playHangup() { this.stopAll(); this.stopped = false; this._beep(440, 0.15, 0.1); setTimeout(() => this._beep(330, 0.15, 0.1), 150); setTimeout(() => this._beep(262, 0.25, 0.1), 300); }
-    playJoin() { this.stopped = false; this._beep(700, 0.1, 0.08); setTimeout(() => this._beep(900, 0.12, 0.08), 120); }
     playMsgSent() { this.stopped = false; this._ensure(); const o = this.ctx.createOscillator(), g = this.ctx.createGain(); o.type = 'sine'; o.frequency.value = 800; g.gain.setValueAtTime(0.06, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08); o.connect(g); g.connect(this.ctx.destination); o.start(); o.stop(this.ctx.currentTime + 0.08); }
     playMsgReceived() { this.stopped = false; this._beep(660, 0.08, 0.06); setTimeout(() => this._beep(880, 0.1, 0.06), 80); }
     stopAll() { this.stopped = true; if (this.ringInterval) { clearInterval(this.ringInterval); this.ringInterval = null; } this.activeNodes.forEach(n => { try { n.stop(); } catch (e) { } }); this.activeNodes = []; }
 }
 
 /* ═══════════════════════════════════
-   MICROPHONE MANAGER
+   MIC MANAGER
    ═══════════════════════════════════ */
 class MicManager {
-    constructor() {
-        this.stream = null;
-        this.permitted = false;
-    }
+    constructor() { this.permitted = false; }
 
-    async request() {
-        // Already have an active stream
-        if (this.stream && this.stream.active) return this.stream;
-
+    async request(withVideo = false) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error('Ваш браузер не поддерживает доступ к микрофону. Используйте Chrome или Safari.');
+            throw new Error('Браузер не поддерживает медиа. Используйте Chrome или Safari.');
         }
-
-        // Check if we're on HTTPS (required for getUserMedia)
         if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-            throw new Error('Микрофон доступен только через HTTPS. Откройте сайт через защищённое соединение.');
+            throw new Error('Нужен HTTPS для доступа к микрофону/камере.');
         }
-
         try {
-            this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
             this.permitted = true;
-            return this.stream;
+            return stream;
         } catch (e) {
-            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                throw new Error('Доступ к микрофону запрещён. Разрешите доступ в настройках браузера и перезагрузите страницу.');
-            } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
-                throw new Error('Микрофон не найден. Подключите микрофон и попробуйте снова.');
-            } else {
-                throw new Error('Ошибка микрофона: ' + e.message);
-            }
+            if (e.name === 'NotAllowedError') throw new Error('Доступ запрещён. Разрешите в настройках браузера и перезагрузите.');
+            if (e.name === 'NotFoundError') throw new Error(withVideo ? 'Камера не найдена.' : 'Микрофон не найден.');
+            throw new Error('Ошибка медиа: ' + e.message);
         }
     }
 
-    release() {
-        if (this.stream) {
-            this.stream.getTracks().forEach(t => t.stop());
-            this.stream = null;
-        }
-    }
-
-    // Pre-authorize mic on user gesture (important for mobile!)
     async preAuth() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
             this.permitted = true;
-            // Stop immediately - we just needed the permission
-            stream.getTracks().forEach(t => t.stop());
-            return true;
-        } catch (e) {
-            return false;
-        }
+            s.getTracks().forEach(t => t.stop());
+        } catch (e) { /* ignore */ }
     }
 }
 
 const micManager = new MicManager();
 
 /* ═══════════════════════════════════
-   GROUP VOICE CALL (Mesh WebRTC)
+   GROUP CALL (Mesh WebRTC + Video)
    ═══════════════════════════════════ */
 const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] };
 
@@ -121,83 +97,74 @@ class GroupCall {
         this.timerInterval = null;
         this.seconds = 0;
         this.muted = false;
+        this.camOff = false;
+        this.withVideo = false;
         this.myUid = null;
-        this.activeChatId = null;
     }
 
-    async joinRoom(chatId, uid) {
+    async joinRoom(chatId, uid, withVideo = false) {
+        this.withVideo = withVideo;
         try {
-            this.localStream = await micManager.request();
+            this.localStream = await micManager.request(withVideo);
         } catch (e) {
             alert(e.message);
             return false;
         }
-
         this.myUid = uid;
-        this.activeChatId = chatId;
         this.muted = false;
+        this.camOff = false;
         this.updateMuteUI();
+        this.updateCamUI();
 
-        // Find or create active room for this chat
-        const roomsSnap = await db.collection('chats').doc(chatId).collection('rooms')
-            .where('status', '==', 'active').limit(1).get();
-
-        if (!roomsSnap.empty) {
-            this.roomRef = roomsSnap.docs[0].ref;
-        } else {
-            this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
-                status: 'active',
-                participants: [],
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
+        // Show local video if video call
+        if (withVideo) {
+            const lv = document.getElementById('local-video');
+            lv.srcObject = this.localStream;
+            lv.classList.remove('hidden');
+            document.getElementById('btn-call-cam').classList.remove('hidden');
+            document.getElementById('call-overlay').classList.add('video-active');
         }
 
-        // Add myself to participants
-        await this.roomRef.update({
-            participants: firebase.firestore.FieldValue.arrayUnion(uid)
-        });
+        // Find or create room
+        const snap = await db.collection('chats').doc(chatId).collection('rooms')
+            .where('status', '==', 'active').limit(1).get();
 
-        // Listen for participants joining/leaving
+        this.roomRef = snap.empty
+            ? await db.collection('chats').doc(chatId).collection('rooms').add({
+                status: 'active', participants: [], withVideo,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            })
+            : snap.docs[0].ref;
+
+        await this.roomRef.update({ participants: firebase.firestore.FieldValue.arrayUnion(uid) });
+
+        // Watch participants
         this.roomUnsub = this.roomRef.onSnapshot(snap => {
             const data = snap.data();
-            if (!data) return;
-            const participants = data.participants || [];
+            if (!data || data.status === 'ended') { this.cleanup(); return; }
+            const parts = data.participants || [];
 
-            // Create connections to new peers
-            for (const peerId of participants) {
-                if (peerId === this.myUid) continue;
-                if (!this.peers[peerId]) {
-                    // Someone joined — stop dialing/ringing sounds immediately
-                    this.sounds.stopAll();
-                    this._createPeer(peerId, true);
-                    this.updateParticipantCount(participants.length);
-                }
+            for (const pid of parts) {
+                if (pid === this.myUid || this.peers[pid]) continue;
+                this.sounds.stopAll();
+                this._createPeer(pid, true);
+                this.updateParticipantCount(parts.length);
             }
-
-            // Remove connections for left peers
-            for (const peerId of Object.keys(this.peers)) {
-                if (!participants.includes(peerId)) {
-                    this._removePeer(peerId);
-                    this.updateParticipantCount(participants.length);
-                }
+            for (const pid of Object.keys(this.peers)) {
+                if (!parts.includes(pid)) { this._removePeer(pid); this.updateParticipantCount(parts.length); }
             }
-
-            if (participants.length <= 1 && this.seconds > 0) {
-                // Everyone left
-                this.endCall();
-            }
+            // If I'm alone and timer is running (everyone else left)
+            if (parts.length <= 1 && this.seconds > 0) this.endCall();
         });
 
-        // Listen for signaling messages directed at us
+        // Listen for signals to me
         this.signalUnsub = this.roomRef.collection('signals')
             .where('to', '==', uid)
             .onSnapshot(snap => {
-                snap.docChanges().forEach(async change => {
-                    if (change.type !== 'added') return;
-                    const sig = change.doc.data();
-                    await this._handleSignal(sig);
-                    // Clean up processed signal
-                    change.doc.ref.delete().catch(() => { });
+                snap.docChanges().forEach(async ch => {
+                    if (ch.type !== 'added') return;
+                    await this._handleSignal(ch.doc.data());
+                    ch.doc.ref.delete().catch(() => { });
                 });
             });
 
@@ -207,19 +174,27 @@ class GroupCall {
     async _createPeer(peerId, isInitiator) {
         const pc = new RTCPeerConnection(ICE);
         this.peers[peerId] = pc;
-
         this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
 
         pc.ontrack = e => {
-            let audio = this.audioElements[peerId];
-            if (!audio) {
-                audio = document.createElement('audio');
-                audio.autoplay = true;
-                audio.id = 'audio-' + peerId;
-                document.body.appendChild(audio);
-                this.audioElements[peerId] = audio;
+            const stream = e.streams[0];
+            // Check if it's a video track
+            if (e.track.kind === 'video') {
+                const rv = document.getElementById('remote-video');
+                rv.srcObject = stream;
+                rv.classList.remove('hidden');
+                document.getElementById('call-overlay').classList.add('video-active');
+            } else {
+                let audio = this.audioElements[peerId];
+                if (!audio) {
+                    audio = document.createElement('audio');
+                    audio.autoplay = true;
+                    audio.id = 'audio-' + peerId;
+                    document.body.appendChild(audio);
+                    this.audioElements[peerId] = audio;
+                }
+                audio.srcObject = stream;
             }
-            audio.srcObject = e.streams[0];
         };
 
         pc.onicecandidate = e => {
@@ -231,7 +206,7 @@ class GroupCall {
             }
         };
 
-        const checkConnected = () => {
+        const checkConn = () => {
             const s = pc.connectionState || pc.iceConnectionState;
             if ((s === 'connected' || s === 'completed') && !this.timerInterval) {
                 this.sounds.stopAll();
@@ -239,8 +214,8 @@ class GroupCall {
                 this.onConnected();
             }
         };
-        pc.onconnectionstatechange = checkConnected;
-        pc.oniceconnectionstatechange = checkConnected;
+        pc.onconnectionstatechange = checkConn;
+        pc.oniceconnectionstatechange = checkConn;
 
         if (isInitiator) {
             const offer = await pc.createOffer();
@@ -254,9 +229,7 @@ class GroupCall {
 
     async _handleSignal(sig) {
         if (sig.type === 'offer') {
-            if (!this.peers[sig.from]) {
-                await this._createPeer(sig.from, false);
-            }
+            if (!this.peers[sig.from]) await this._createPeer(sig.from, false);
             const pc = this.peers[sig.from];
             if (!pc) return;
             await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
@@ -268,18 +241,16 @@ class GroupCall {
             });
         } else if (sig.type === 'answer') {
             const pc = this.peers[sig.from];
-            if (pc && !pc.currentRemoteDescription) {
-                await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
-            }
+            if (pc && !pc.currentRemoteDescription) await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
         } else if (sig.type === 'candidate') {
             const pc = this.peers[sig.from];
             if (pc) await pc.addIceCandidate(new RTCIceCandidate(sig.data));
         }
     }
 
-    _removePeer(peerId) {
-        if (this.peers[peerId]) { this.peers[peerId].close(); delete this.peers[peerId]; }
-        if (this.audioElements[peerId]) { this.audioElements[peerId].remove(); delete this.audioElements[peerId]; }
+    _removePeer(pid) {
+        if (this.peers[pid]) { this.peers[pid].close(); delete this.peers[pid]; }
+        if (this.audioElements[pid]) { this.audioElements[pid].remove(); delete this.audioElements[pid]; }
     }
 
     toggleMute() {
@@ -289,18 +260,30 @@ class GroupCall {
         this.updateMuteUI();
     }
 
+    toggleCam() {
+        if (!this.localStream) return;
+        const tracks = this.localStream.getVideoTracks();
+        if (tracks.length === 0) return;
+        this.camOff = !this.camOff;
+        tracks.forEach(t => { t.enabled = !this.camOff; });
+        this.updateCamUI();
+    }
+
     updateMuteUI() {
         const btn = document.getElementById('btn-call-mute');
-        if (!btn) return;
         btn.innerText = this.muted ? '🔇' : '🎙️';
         btn.classList.toggle('muted', this.muted);
     }
 
+    updateCamUI() {
+        const btn = document.getElementById('btn-call-cam');
+        btn.innerText = this.camOff ? '🚫' : '📷';
+        btn.classList.toggle('cam-off', this.camOff);
+    }
+
     updateParticipantCount(count) {
         const el = document.getElementById('call-status');
-        if (el && this.timerInterval) {
-            el.innerText = `Участников: ${count}`;
-        }
+        if (el && this.timerInterval) el.innerText = `Участников: ${count}`;
     }
 
     onConnected() {
@@ -317,11 +300,16 @@ class GroupCall {
 
     async endCall() {
         this.sounds.playHangup();
-        // Remove ourselves from participants
         if (this.roomRef && this.myUid) {
+            const snap = await this.roomRef.get().catch(() => null);
+            const parts = snap?.data()?.participants || [];
             await this.roomRef.update({
                 participants: firebase.firestore.FieldValue.arrayRemove(this.myUid)
             }).catch(() => { });
+            // If I was the last (or only) participant, mark room as ended
+            if (parts.length <= 1) {
+                await this.roomRef.update({ status: 'ended' }).catch(() => { });
+            }
         }
         this.cleanup();
     }
@@ -330,17 +318,23 @@ class GroupCall {
         this.sounds.stopAll();
         if (this.timerInterval) clearInterval(this.timerInterval);
         this.timerInterval = null;
-        micManager.release();
+        if (this.localStream) this.localStream.getTracks().forEach(t => t.stop());
         this.localStream = null;
         Object.keys(this.peers).forEach(id => this._removePeer(id));
         if (this.signalUnsub) this.signalUnsub();
         if (this.roomUnsub) this.roomUnsub();
         this.signalUnsub = null;
         this.roomUnsub = null;
-        this.localStream = null;
         this.roomRef = null;
         this.myUid = null;
-        this.activeChatId = null;
+
+        // Reset video UI
+        const rv = document.getElementById('remote-video');
+        const lv = document.getElementById('local-video');
+        rv.srcObject = null; rv.classList.add('hidden');
+        lv.srcObject = null; lv.classList.add('hidden');
+        document.getElementById('btn-call-cam').classList.add('hidden');
+        document.getElementById('call-overlay').classList.remove('video-active');
         document.getElementById('call-overlay').classList.add('hidden');
     }
 
@@ -361,27 +355,19 @@ class Vinychat {
         this.voice = new GroupCall(this.sounds);
         this.globalCallUnsubs = [];
         this.pendingCall = null;
+        this.pendingCallUnsub = null;  // listener for call cancellation
         this.isMobile = window.innerWidth <= 768;
         this.msgCount = 0;
-        this.micPreAuthed = false;
         this.bind();
         this.listen();
-        this._setupMobileAudio();
+        this._setupMobile();
         window.addEventListener('resize', () => { this.isMobile = window.innerWidth <= 768; });
     }
 
-    // Pre-request mic permission on first user interaction (critical for mobile!)
-    _setupMobileAudio() {
+    _setupMobile() {
         const handler = async () => {
-            // Resume AudioContext on user gesture (iOS requirement)
-            if (this.sounds.ctx && this.sounds.ctx.state === 'suspended') {
-                this.sounds.ctx.resume();
-            }
-            // Pre-authorize mic
-            if (!this.micPreAuthed) {
-                this.micPreAuthed = true;
-                await micManager.preAuth();
-            }
+            if (this.sounds.ctx && this.sounds.ctx.state === 'suspended') this.sounds.ctx.resume();
+            await micManager.preAuth();
             document.removeEventListener('touchstart', handler);
             document.removeEventListener('click', handler);
         };
@@ -401,9 +387,11 @@ class Vinychat {
         $('btn-settings').onclick = () => this.profileModal();
         $('btn-create-group').onclick = () => this.createGroup();
         $('btn-chat-settings').onclick = () => this.chatSettingsModal();
-        $('btn-voice-call').onclick = () => this.initiateCall();
+        $('btn-voice-call').onclick = () => this.initiateCall(false);
+        $('btn-video-call').onclick = () => this.initiateCall(true);
         $('btn-call-end').onclick = () => this.voice.endCall();
         $('btn-call-mute').onclick = () => this.voice.toggleMute();
+        $('btn-call-cam').onclick = () => this.voice.toggleCam();
         $('modal-close').onclick = () => $('modal-container').classList.add('hidden');
         $('modal-ok').onclick = () => $('modal-container').classList.add('hidden');
         $('btn-back').onclick = () => this.showSidebar();
@@ -426,7 +414,6 @@ class Vinychat {
     showSidebar() {
         document.getElementById('sidebar').classList.remove('sidebar-hidden');
         document.getElementById('active-chat').classList.add('hidden');
-        document.getElementById('no-chat-selected').style.display = 'none';
     }
     hideSidebar() { if (this.isMobile) document.getElementById('sidebar').classList.add('sidebar-hidden'); }
 
@@ -470,38 +457,55 @@ class Vinychat {
                     snap.docChanges().forEach(async change => {
                         if (change.type !== 'added') return;
                         const data = change.doc.data();
-                        const participants = data.participants || [];
-
-                        // Skip if we're already in this room or any call
-                        if (participants.includes(this.user.uid)) return;
+                        const parts = data.participants || [];
+                        if (parts.includes(this.user.uid)) return;
                         if (this.voice.isActive) return;
+                        if (parts.length === 0) return;
 
-                        // Someone started a call — notify us
                         let callerName = 'Звонок';
-                        if (participants.length > 0) {
-                            const u = await this.getUser(participants[0]);
-                            if (u) callerName = u.username;
-                        }
+                        const u = await this.getUser(parts[0]);
+                        if (u) callerName = u.username;
 
-                        this.pendingCall = { chatId: chat.id, chat };
-                        this.showIncomingBanner(callerName);
+                        const isVideo = data.withVideo || false;
+                        this.pendingCall = { chatId: chat.id, chat, roomRef: change.doc.ref, isVideo };
+
+                        // Watch for cancellation: if room becomes ended or empty
+                        if (this.pendingCallUnsub) this.pendingCallUnsub();
+                        this.pendingCallUnsub = change.doc.ref.onSnapshot(roomSnap => {
+                            const rd = roomSnap.data();
+                            if (!rd || rd.status === 'ended' || (rd.participants || []).length === 0) {
+                                this.dismissIncoming();
+                            }
+                        });
+
+                        this.showIncomingBanner(callerName, isVideo);
                     });
                 });
             this.globalCallUnsubs.push(unsub);
         }
     }
 
-    showIncomingBanner(name) {
+    showIncomingBanner(name, isVideo) {
         this.sounds.startRinging();
         document.getElementById('incoming-name').innerText = name;
+        document.getElementById('incoming-label').innerText = isVideo ? '📹 Входящий видеозвонок' : '📞 Входящий вызов';
         document.getElementById('incoming-call').classList.remove('hidden');
+    }
+
+    // Called when caller cancels — dismiss banner silently
+    dismissIncoming() {
+        document.getElementById('incoming-call').classList.add('hidden');
+        this.sounds.stopAll();
+        if (this.pendingCallUnsub) { this.pendingCallUnsub(); this.pendingCallUnsub = null; }
+        this.pendingCall = null;
     }
 
     async acceptIncoming() {
         document.getElementById('incoming-call').classList.add('hidden');
         this.sounds.stopAll();
+        if (this.pendingCallUnsub) { this.pendingCallUnsub(); this.pendingCallUnsub = null; }
         if (!this.pendingCall) return;
-        const { chatId, chat } = this.pendingCall;
+        const { chatId, chat, isVideo } = this.pendingCall;
         this.pendingCall = null;
 
         let name = chat.name || 'Группа', av = '👥';
@@ -513,13 +517,14 @@ class Vinychat {
         document.getElementById('call-timer').classList.add('hidden');
         document.getElementById('call-overlay').classList.remove('hidden');
 
-        const ok = await this.voice.joinRoom(chatId, this.user.uid);
+        const ok = await this.voice.joinRoom(chatId, this.user.uid, isVideo);
         if (!ok) document.getElementById('call-overlay').classList.add('hidden');
     }
 
     async declineIncoming() {
         document.getElementById('incoming-call').classList.add('hidden');
         this.sounds.stopAll();
+        if (this.pendingCallUnsub) { this.pendingCallUnsub(); this.pendingCallUnsub = null; }
         this.pendingCall = null;
     }
 
@@ -604,7 +609,7 @@ class Vinychat {
     }
 
     /* ── CALLS ───────────────────── */
-    async initiateCall() {
+    async initiateCall(withVideo) {
         if (!this.chatId) return;
         if (this.voice.isActive) { alert('Вы уже в звонке'); return; }
         const name = document.getElementById('active-chat-name').innerText;
@@ -614,17 +619,18 @@ class Vinychat {
         document.getElementById('call-overlay').classList.remove('hidden');
 
         this.sounds.startDialing();
-        const ok = await this.voice.joinRoom(this.chatId, this.user.uid);
+        const ok = await this.voice.joinRoom(this.chatId, this.user.uid, withVideo);
         if (!ok) { document.getElementById('call-overlay').classList.add('hidden'); this.sounds.stopAll(); return; }
 
-        await db.collection('chats').doc(this.chatId).collection('messages').add({ senderId: 'system', text: '📞 Начат голосовой вызов', type: 'system', timestamp: firebase.firestore.FieldValue.serverTimestamp() });
+        const emoji = withVideo ? '📹' : '📞';
+        const text = withVideo ? 'Начат видеозвонок' : 'Начат голосовой вызов';
+        await db.collection('chats').doc(this.chatId).collection('messages').add({ senderId: 'system', text: `${emoji} ${text}`, type: 'system', timestamp: firebase.firestore.FieldValue.serverTimestamp() });
     }
 
     /* ── MODALS ─────────────────── */
     async userAction(uid) {
         if (uid === this.user.uid || uid === 'system') return;
-        const u = await this.getUser(uid);
-        if (!u) return;
+        const u = await this.getUser(uid); if (!u) return;
         document.getElementById('modal-title').innerText = u.username;
         document.getElementById('modal-body').innerHTML = `<div style="text-align:center"><div class="avatar" style="width:64px;height:64px;font-size:28px;margin:0 auto 15px">${u.avatar}</div><button class="primary-btn" style="width:100%" onclick="App.startDM({uid:'${uid}',username:'${u.username}',avatar:'${u.avatar}'});document.getElementById('modal-container').classList.add('hidden')">Написать в личку</button></div>`;
         document.getElementById('modal-container').classList.remove('hidden');
