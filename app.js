@@ -76,11 +76,14 @@ const micManager = new MicManager();
    ═══════════════════════════════════ */
 const ICE = {
     iceServers: [
-        // STUN servers
+        // STUN servers (Diverse set)
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun.services.mozilla.com" },
         { urls: "stun:stun.stunprotocol.org:3478" },
-        { urls: "stun:stun.voip.blackberry.com:3478" },
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun.ekiga.net" },
+        { urls: "stun:stun.ideasip.com" },
 
         // TURN servers (Critical for Russia/NAT/Firewalls)
         {
@@ -108,7 +111,8 @@ const ICE = {
         }
     ],
     iceCandidatePoolSize: 10,
-    iceTransportPolicy: 'all'
+    iceTransportPolicy: 'all',
+    bundlePolicy: 'max-bundle'
 };
 
 class GroupCall {
@@ -259,16 +263,29 @@ class GroupCall {
 
         const check = () => {
             const s = pc.connectionState || pc.iceConnectionState;
-            console.log(`WebRTC connection state for ${pid}:`, s);
+            console.log(`[ICE Status] ${pid}: ${s}`);
+
             if ((s === 'connected' || s === 'completed') && !this.timerInterval) {
+                console.log('✅ Соединение установлено!');
                 this.sounds.stopAll(); this.sounds.playConnected(); this.onConnected();
             }
-            // Update UI with connection status
+
             if (s === 'connecting' || s === 'checking') {
                 document.getElementById('call-status').innerText = 'Подключение...';
             } else if (s === 'failed' || s === 'disconnected') {
-                console.error('WebRTC connection failed for', pid, '- trying TURN relay');
+                console.error('❌ Ошибка WebRTC:', s, 'Пробуем перезапуск ICE...');
                 document.getElementById('call-status').innerText = 'Обход блокировок...';
+
+                // Если соединение упало, пробуем перезапустить процесс поиска кандидатов
+                if (init && this.roomRef) {
+                    pc.createOffer({ iceRestart: true }).then(offer => {
+                        pc.setLocalDescription(offer);
+                        this.roomRef.collection('signals').add({
+                            from: this.myUid, to: pid, type: 'offer',
+                            data: { sdp: offer.sdp, type: offer.type }
+                        });
+                    });
+                }
             }
         };
         pc.onconnectionstatechange = check;
