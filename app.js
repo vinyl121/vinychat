@@ -139,9 +139,9 @@ class GroupCall {
             for (const pid of parts) {
                 if (pid === this.myUid || this.peers[pid]) continue;
                 this.sounds.stopAll();
-                // Determine initiator by UID comparison (lexicographic)
-                // Only the peer with the lower UID sends the offer
-                const shouldInitiate = this.myUid < pid;
+                // Determine initiator: first participant in array is initiator
+                // This ensures room creator always sends offer
+                const shouldInitiate = parts.indexOf(this.myUid) < parts.indexOf(pid);
                 this._createPeer(pid, shouldInitiate);
                 this.updateCount(parts.length);
             }
