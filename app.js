@@ -206,8 +206,6 @@ class Vinychat {
         $('btn-voice-call').onclick = () => this.initiateCall(false);
         $('btn-video-call').onclick = () => this.initiateCall(true);
         $('btn-call-end').onclick = () => this.voice.endCall();
-        $('btn-call-mute').onclick = () => this.voice.toggleMute();
-        $('btn-call-cam').onclick = () => this.voice.toggleCam();
         $('modal-close').onclick = () => $('modal-container').classList.add('hidden');
         $('modal-ok').onclick = () => $('modal-container').classList.add('hidden');
         $('btn-back').onclick = () => this.showSidebar();
