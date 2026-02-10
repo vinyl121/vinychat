@@ -1,6 +1,6 @@
 /**
- * Vinychat Engine 3.7 - INVITE ONLY EDITION
- * Personal invite links, search removed, clean logic
+ * Vinychat Engine 3.8.2 - PRO POLISH
+ * Fixed message colors, removed attachment, beautiful buttons, simulated calls
  */
 
 const firebaseConfig = {
@@ -15,7 +15,6 @@ const firebaseConfig = {
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
-const storage = firebase.storage();
 
 class Vinychat {
     constructor() {
@@ -52,7 +51,7 @@ class Vinychat {
         document.getElementById('btn-send').onclick = () => this.sendMessage();
 
         document.getElementById('btn-chat-settings').onclick = () => this.showChatManagement();
-        document.getElementById('btn-voice-call').onclick = () => alert("Звонки будут доступны в v4.0");
+        document.getElementById('btn-voice-call').onclick = () => this.startVoiceCall();
 
         this.inputs.msg.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); this.sendMessage(); } };
 
@@ -62,9 +61,6 @@ class Vinychat {
         const closeMod = () => document.getElementById('modal-container').classList.add('hidden');
         document.getElementById('modal-cancel').onclick = closeMod;
         document.getElementById('modal-cancel-icon').onclick = closeMod;
-
-        document.getElementById('btn-attachment').onclick = () => this.inputs.file.click();
-        this.inputs.file.onchange = (e) => this.handleFileUpload(e.target.files[0]);
     }
 
     listenAuth() {
@@ -85,39 +81,34 @@ class Vinychat {
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('join');
         const userId = urlParams.get('user');
-
         if (!this.currentUser) return;
 
         if (joinId) {
             await db.collection('chats').doc(joinId).update({ participants: firebase.firestore.FieldValue.arrayUnion(this.currentUser.uid) });
             window.history.replaceState({}, '', window.location.pathname);
         } else if (userId) {
-            const userDoc = await db.collection('users').doc(userId).get();
-            if (userDoc.exists) {
-                this.startChat({ uid: userId, ...userDoc.data() });
-            }
+            const doc = await db.collection('users').doc(userId).get();
+            if (doc.exists) this.startChat({ uid: userId, ...doc.data() });
             window.history.replaceState({}, '', window.location.pathname);
         }
     }
 
     async syncUser() {
-        const u = this.currentUser;
-        const doc = await db.collection('users').doc(u.uid).get();
-        let name = doc.exists ? (doc.data().username || "User") : (u.email.split('@')[0]);
-        await db.collection('users').doc(u.uid).set({ uid: u.uid, username: name, avatar: name[0].toUpperCase() }, { merge: true });
+        const doc = await db.collection('users').doc(this.currentUser.uid).get();
+        let name = doc.exists ? doc.data().username : this.currentUser.email.split('@')[0];
+        await db.collection('users').doc(this.currentUser.uid).set({ uid: this.currentUser.uid, username: name, avatar: name[0].toUpperCase() }, { merge: true });
         document.getElementById('current-username').innerText = name;
         document.getElementById('current-user-avatar').innerText = name[0].toUpperCase();
     }
 
     async handleLogin() {
-        try { await auth.signInWithEmailAndPassword(document.getElementById('login-email').value, document.getElementById('login-password').value); } catch (e) { alert("Ошибка: " + e.message); }
+        try { await auth.signInWithEmailAndPassword(document.getElementById('login-email').value, document.getElementById('login-password').value); } catch (e) { alert(e.message); }
     }
 
     async handleRegister() {
         const u = document.getElementById('reg-username').value;
         const e = document.getElementById('reg-email').value;
         const p = document.getElementById('reg-password').value;
-        if (!u || !e || !p) return alert("Заполните все поля");
         try {
             const res = await auth.createUserWithEmailAndPassword(e, p);
             await db.collection('users').doc(res.user.uid).set({ uid: res.user.uid, username: u, avatar: u[0].toUpperCase() });
@@ -164,15 +155,8 @@ class Vinychat {
         if (other.uid === this.currentUser.uid) return;
         const exist = this.allChats.find(c => c.type === 'personal' && c.participants.includes(other.uid));
         if (exist) return this.openChat(exist.id, { ...exist, name: other.username, avatar: other.avatar });
-        const ref = await db.collection('chats').add({ type: 'personal', participants: [this.currentUser.uid, other.uid], lastMessage: { text: "Чат" }, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+        const ref = await db.collection('chats').add({ type: 'personal', participants: [this.currentUser.uid, other.uid], lastMessage: { text: "Чат активен" }, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
         this.openChat(ref.id, { name: other.username, avatar: other.avatar });
-    }
-
-    async joinGroup(group) {
-        if (!group.participants.includes(this.currentUser.uid)) {
-            await db.collection('chats').doc(group.id).update({ participants: firebase.firestore.FieldValue.arrayUnion(this.currentUser.uid) });
-        }
-        this.openChat(group.id, group);
     }
 
     openChat(id, data) {
@@ -191,39 +175,18 @@ class Vinychat {
         for (const d of docs) {
             const m = d.data();
             const mine = m.senderId === this.currentUser.uid;
-            let authorName = "";
+            let author = "";
             if (!mine && chatData.type === 'group') {
                 const user = await this.getUser(m.senderId);
-                authorName = `<span class="msg-author" style="font-size:10px; color:var(--primary); font-weight:700; cursor:pointer;" onclick="App.showUserAction('${m.senderId}')">${user ? user.username : '...'}</span>`;
-            }
-            let content = `<div class="msg-text" style="cursor:pointer" onclick="!${mine} && App.showUserAction('${m.senderId}')">${this.escape(m.text || "")}</div>`;
-            if (m.fileUrl) {
-                if (m.fileType?.startsWith('image/')) content = `<img src="${m.fileUrl}" style="max-width:250px; border-radius:12px; margin-top:5px;" onclick="window.open('${m.fileUrl}')">`;
-                else content = `<a href="${m.fileUrl}" target="_blank">📄 ${m.fileName || 'Файл'}</a>`;
+                author = `<span class="msg-author" onclick="App.showUserAction('${m.senderId}')">${user ? user.username : '...'}</span>`;
             }
             const div = document.createElement('div');
-            div.className = `message ${mine ? 'mine' : 'other'}`;
+            div.className = `message ${mine ? 'mine' : 'other'} ${m.type || ''}`;
             const time = m.timestamp ? new Date(m.timestamp.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-            div.innerHTML = `${authorName}${content}<div style="font-size:9px; opacity:0.5; text-align:right;">${time}</div>`;
+            div.innerHTML = `${author}<div class="msg-text" onclick="!${mine} && App.showUserAction('${m.senderId}')">${this.escape(m.text || "")}</div><div style="font-size:9px; opacity:0.5; text-align:right; margin-top:4px;">${time}</div>`;
             this.areas.messages.appendChild(div);
         }
         this.areas.messages.scrollTop = this.areas.messages.scrollHeight;
-    }
-
-    async showUserAction(uid) {
-        if (uid === this.currentUser.uid || uid === "system") return;
-        const user = await this.getUser(uid);
-        if (!user) return;
-        document.getElementById('modal-title').innerText = "Пользователь";
-        document.getElementById('modal-body').innerHTML = `
-            <div style="text-align:center;">
-                <div class="avatar" style="width:60px; height:60px; margin:0 auto 15px;">${user.avatar}</div>
-                <h3>${user.username}</h3>
-                <br>
-                <button onclick="App.startChat({uid:'${uid}', username:'${user.username}', avatar:'${user.avatar}'}); document.getElementById('modal-container').classList.add('hidden');" class="primary-btn">Написать в личку</button>
-            </div>
-        `;
-        document.getElementById('modal-container').classList.remove('hidden');
     }
 
     async sendMessage() {
@@ -234,38 +197,59 @@ class Vinychat {
         await db.collection('chats').doc(this.activeChatId).update({ lastMessage: { text: t, senderId: this.currentUser.uid }, lastActivity: firebase.firestore.FieldValue.serverTimestamp() });
     }
 
-    async handleFileUpload(file) {
-        if (!file || !this.activeChatId) return;
-        try {
-            const ref = storage.ref(`chats/${this.activeChatId}/${Date.now()}_${file.name}`);
-            const snap = await ref.put(file);
-            const url = await snap.ref.getDownloadURL();
-            await db.collection('chats').doc(this.activeChatId).collection('messages').add({ senderId: this.currentUser.uid, fileUrl: url, fileName: file.name, fileType: file.type, timestamp: firebase.firestore.FieldValue.serverTimestamp() });
-        } catch (e) { alert("Ошибка загрузки."); }
+    async startVoiceCall() {
+        if (!this.activeChatId) return;
+        const chat = this.allChats.find(c => c.id === this.activeChatId);
+        const name = chat.name || document.getElementById('active-chat-name').innerText;
+
+        document.getElementById('modal-title').innerText = "Голосовой вызов";
+        document.getElementById('modal-body').innerHTML = `
+            <div style="text-align:center;">
+                <div class="avatar" style="width:80px; height:80px; margin:0 auto 20px; font-size:32px;">📞</div>
+                <h2 style="color:white; margin-bottom:5px;">${name}</h2>
+                <p style="color:var(--text-dim); margin-bottom:20px;">Идет соединение...</p>
+                <div style="display:flex; gap:10px;">
+                    <button onclick="document.getElementById('modal-container').classList.add('hidden')" style="background:#ff4757 !important;">Сбросить</button>
+                    <button onclick="alert('Микрофон подключен')" style="background:#10b981 !important;">Ответить</button>
+                </div>
+            </div>
+        `;
+        document.getElementById('modal-container').classList.remove('hidden');
+        await db.collection('chats').doc(this.activeChatId).collection('messages').add({
+            senderId: "system", text: "📞 Начался голосовой вызов...", type: "system", timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    }
+
+    async showUserAction(uid) {
+        if (uid === this.currentUser.uid || uid === "system") return;
+        const user = await this.getUser(uid);
+        document.getElementById('modal-title').innerText = "Профиль";
+        document.getElementById('modal-body').innerHTML = `
+            <div style="text-align:center;">
+                <div class="avatar" style="width:60px; height:60px; margin:0 auto 15px;">${user.avatar}</div>
+                <h3 style="color:white;">${user.username}</h3>
+                <br>
+                <button onclick="App.startChat({uid:'${uid}', username:'${user.username}', avatar:'${user.avatar}'}); document.getElementById('modal-container').classList.add('hidden');">Написать в личку</button>
+            </div>
+        `;
+        document.getElementById('modal-container').classList.remove('hidden');
     }
 
     async showProfileSettings() {
         const u = await this.getUser(this.currentUser.uid);
-        const name = u ? u.username : "User";
-        const inviteLink = `${window.location.protocol}//${window.location.host}${window.location.pathname}?user=${this.currentUser.uid}`;
-
-        document.getElementById('modal-title').innerText = "Ваш профиль";
+        const inviteLink = `${window.location.origin}${window.location.pathname}?user=${this.currentUser.uid}`;
+        document.getElementById('modal-title').innerText = "Профиль";
         document.getElementById('modal-body').innerHTML = `
-            <p style="font-size:12px; opacity:0.7;">Имя пользователя:</p>
-            <input type="text" id="new-username" value="${name}" style="width:100%; padding:10px; background:rgba(0,0,0,0.2); border:none; color:white; border-radius:8px; margin-bottom:15px;">
-            
-            <p style="font-size:12px; opacity:0.7;">Ваша ссылка для личных сообщений:</p>
-            <button onclick="navigator.clipboard.writeText('${inviteLink}'); alert('Ссылка скопирована!');" class="primary-btn" style="width:100%; margin-bottom:15px; font-size:13px; background:var(--primary-gradient);">Скопировать мою ссылку</button>
-            <p style="font-size:11px; opacity:0.5;">Любой, кто перейдет по этой ссылке, сможет открыть с вами чат.</p>
+            <p style="font-size:12px; margin-bottom:5px;">Никнейм:</p>
+            <input type="text" id="new-username" value="${u.username}" style="margin-bottom:20px;">
+            <p style="font-size:12px; margin-bottom:5px;">Ваша ссылка:</p>
+            <button onclick="navigator.clipboard.writeText('${inviteLink}'); alert('Скопировано!')">Скопировать ссылку профиля</button>
         `;
-
         document.getElementById('modal-cancel').onclick = () => {
             const n = document.getElementById('new-username').value;
-            if (n && n !== name) {
+            if (n && n !== u.username) {
                 db.collection('users').doc(this.currentUser.uid).update({ username: n, avatar: n[0].toUpperCase() }).then(() => location.reload());
-            } else {
-                document.getElementById('modal-container').classList.add('hidden');
-            }
+            } else document.getElementById('modal-container').classList.add('hidden');
         };
         document.getElementById('modal-container').classList.remove('hidden');
     }
@@ -273,27 +257,21 @@ class Vinychat {
     showChatManagement() {
         const id = this.activeChatId;
         const chat = this.allChats.find(c => c.id === id);
-        if (!chat) return;
         const link = `${window.location.origin}${window.location.pathname}?join=${id}`;
         document.getElementById('modal-title').innerText = "Настройки чата";
         document.getElementById('modal-body').innerHTML = `
-            <p style="font-size:12px; opacity:0.7;">Ссылка-приглашение в чат:</p>
-            <button onclick="navigator.clipboard.writeText('${link}'); alert('Ссылка скопирована!');" class="primary-btn" style="width:100%; margin-bottom:15px;">Скопировать ссылку чата</button>
-            ${chat.type === 'group' ? `<button onclick="App.leaveGroup('${id}')" class="secondary-btn" style="background:#ff4757; color:white; width:100%;">Выйти из группы</button>` : ''}
+            <p style="font-size:12px; margin-bottom:5px;">Пригласить в чат:</p>
+            <button onclick="navigator.clipboard.writeText('${link}'); alert('Скопировано!')">Копировать ссылку</button>
+            ${chat.type === 'group' ? `<button onclick="App.leaveGroup('${id}')" class="secondary-btn">Выйти из группы</button>` : ''}
         `;
         document.getElementById('modal-container').classList.remove('hidden');
     }
 
-    async leaveGroup(id) {
-        if (confirm("Выйти из группы?")) {
-            await db.collection('chats').doc(id).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.currentUser.uid) });
-            location.reload();
-        }
-    }
+    async leaveGroup(id) { if (confirm("Покинуть группу?")) { await db.collection('chats').doc(id).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.currentUser.uid) }); location.reload(); } }
 
     showCreateGroup() {
         const n = prompt("Имя группы:");
-        if (n) db.collection('chats').add({ name: n, type: 'group', participants: [this.currentUser.uid], createdAt: firebase.firestore.FieldValue.serverTimestamp(), lastMessage: { text: "Группа создана" } });
+        if (n) db.collection('chats').add({ name: n, type: 'group', participants: [this.currentUser.uid], createdAt: firebase.firestore.FieldValue.serverTimestamp(), lastMessage: { text: "Создана группа" } });
     }
 
     escape(s) { return s ? s.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])) : ""; }
