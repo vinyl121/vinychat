@@ -1,8 +1,8 @@
 /**
- * Vinychat 5.0 — VIDEO CALLS + CANCEL FIX
- * - Video call support (camera toggle)
- * - Fixed: call cancellation properly dismisses incoming banner
- * - Mesh WebRTC for group calls
+ * Vinychat 5.1 — CALL FIX + DELETE CHATS
+ * - Only notify for recent rooms (< 30s old)
+ * - Auto-end stale rooms
+ * - Delete/close chats
  */
 
 const firebaseConfig = {
@@ -50,34 +50,25 @@ class CallSounds {
    ═══════════════════════════════════ */
 class MicManager {
     constructor() { this.permitted = false; }
-
     async request(withVideo = false) {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error('Браузер не поддерживает медиа. Используйте Chrome или Safari.');
-        }
-        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-            throw new Error('Нужен HTTPS для доступа к микрофону/камере.');
-        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+            throw new Error('Браузер не поддерживает медиа.');
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1')
+            throw new Error('Нужен HTTPS.');
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo });
             this.permitted = true;
-            return stream;
+            return s;
         } catch (e) {
-            if (e.name === 'NotAllowedError') throw new Error('Доступ запрещён. Разрешите в настройках браузера и перезагрузите.');
-            if (e.name === 'NotFoundError') throw new Error(withVideo ? 'Камера не найдена.' : 'Микрофон не найден.');
-            throw new Error('Ошибка медиа: ' + e.message);
+            if (e.name === 'NotAllowedError') throw new Error('Доступ запрещён. Разрешите в настройках браузера.');
+            if (e.name === 'NotFoundError') throw new Error('Устройство не найдено.');
+            throw new Error('Ошибка: ' + e.message);
         }
     }
-
     async preAuth() {
-        try {
-            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-            this.permitted = true;
-            s.getTracks().forEach(t => t.stop());
-        } catch (e) { /* ignore */ }
+        try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); this.permitted = true; s.getTracks().forEach(t => t.stop()); } catch (e) { }
     }
 }
-
 const micManager = new MicManager();
 
 /* ═══════════════════════════════════
@@ -104,19 +95,15 @@ class GroupCall {
 
     async joinRoom(chatId, uid, withVideo = false) {
         this.withVideo = withVideo;
-        try {
-            this.localStream = await micManager.request(withVideo);
-        } catch (e) {
-            alert(e.message);
-            return false;
-        }
+        try { this.localStream = await micManager.request(withVideo); }
+        catch (e) { alert(e.message); return false; }
+
         this.myUid = uid;
         this.muted = false;
         this.camOff = false;
         this.updateMuteUI();
         this.updateCamUI();
 
-        // Show local video if video call
         if (withVideo) {
             const lv = document.getElementById('local-video');
             lv.srcObject = this.localStream;
@@ -125,7 +112,6 @@ class GroupCall {
             document.getElementById('call-overlay').classList.add('video-active');
         }
 
-        // Find or create room
         const snap = await db.collection('chats').doc(chatId).collection('rooms')
             .where('status', '==', 'active').limit(1).get();
 
@@ -138,7 +124,6 @@ class GroupCall {
 
         await this.roomRef.update({ participants: firebase.firestore.FieldValue.arrayUnion(uid) });
 
-        // Watch participants
         this.roomUnsub = this.roomRef.onSnapshot(snap => {
             const data = snap.data();
             if (!data || data.status === 'ended') { this.cleanup(); return; }
@@ -148,18 +133,15 @@ class GroupCall {
                 if (pid === this.myUid || this.peers[pid]) continue;
                 this.sounds.stopAll();
                 this._createPeer(pid, true);
-                this.updateParticipantCount(parts.length);
+                this.updateCount(parts.length);
             }
             for (const pid of Object.keys(this.peers)) {
-                if (!parts.includes(pid)) { this._removePeer(pid); this.updateParticipantCount(parts.length); }
+                if (!parts.includes(pid)) { this._removePeer(pid); this.updateCount(parts.length); }
             }
-            // If I'm alone and timer is running (everyone else left)
             if (parts.length <= 1 && this.seconds > 0) this.endCall();
         });
 
-        // Listen for signals to me
-        this.signalUnsub = this.roomRef.collection('signals')
-            .where('to', '==', uid)
+        this.signalUnsub = this.roomRef.collection('signals').where('to', '==', uid)
             .onSnapshot(snap => {
                 snap.docChanges().forEach(async ch => {
                     if (ch.type !== 'added') return;
@@ -171,74 +153,49 @@ class GroupCall {
         return true;
     }
 
-    async _createPeer(peerId, isInitiator) {
+    async _createPeer(pid, init) {
         const pc = new RTCPeerConnection(ICE);
-        this.peers[peerId] = pc;
+        this.peers[pid] = pc;
         this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
 
         pc.ontrack = e => {
-            const stream = e.streams[0];
-            // Check if it's a video track
             if (e.track.kind === 'video') {
                 const rv = document.getElementById('remote-video');
-                rv.srcObject = stream;
-                rv.classList.remove('hidden');
+                rv.srcObject = e.streams[0]; rv.classList.remove('hidden');
                 document.getElementById('call-overlay').classList.add('video-active');
             } else {
-                let audio = this.audioElements[peerId];
-                if (!audio) {
-                    audio = document.createElement('audio');
-                    audio.autoplay = true;
-                    audio.id = 'audio-' + peerId;
-                    document.body.appendChild(audio);
-                    this.audioElements[peerId] = audio;
-                }
-                audio.srcObject = stream;
+                let a = this.audioElements[pid];
+                if (!a) { a = document.createElement('audio'); a.autoplay = true; a.id = 'audio-' + pid; document.body.appendChild(a); this.audioElements[pid] = a; }
+                a.srcObject = e.streams[0];
             }
         };
 
         pc.onicecandidate = e => {
-            if (e.candidate) {
-                this.roomRef.collection('signals').add({
-                    from: this.myUid, to: peerId,
-                    type: 'candidate', data: e.candidate.toJSON()
-                });
-            }
+            if (e.candidate) this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'candidate', data: e.candidate.toJSON() });
         };
 
-        const checkConn = () => {
+        const check = () => {
             const s = pc.connectionState || pc.iceConnectionState;
             if ((s === 'connected' || s === 'completed') && !this.timerInterval) {
-                this.sounds.stopAll();
-                this.sounds.playConnected();
-                this.onConnected();
+                this.sounds.stopAll(); this.sounds.playConnected(); this.onConnected();
             }
         };
-        pc.onconnectionstatechange = checkConn;
-        pc.oniceconnectionstatechange = checkConn;
+        pc.onconnectionstatechange = check;
+        pc.oniceconnectionstatechange = check;
 
-        if (isInitiator) {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            await this.roomRef.collection('signals').add({
-                from: this.myUid, to: peerId,
-                type: 'offer', data: { sdp: offer.sdp, type: offer.type }
-            });
+        if (init) {
+            const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+            await this.roomRef.collection('signals').add({ from: this.myUid, to: pid, type: 'offer', data: { sdp: offer.sdp, type: offer.type } });
         }
     }
 
     async _handleSignal(sig) {
         if (sig.type === 'offer') {
             if (!this.peers[sig.from]) await this._createPeer(sig.from, false);
-            const pc = this.peers[sig.from];
-            if (!pc) return;
+            const pc = this.peers[sig.from]; if (!pc) return;
             await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            await this.roomRef.collection('signals').add({
-                from: this.myUid, to: sig.from,
-                type: 'answer', data: { sdp: answer.sdp, type: answer.type }
-            });
+            const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+            await this.roomRef.collection('signals').add({ from: this.myUid, to: sig.from, type: 'answer', data: { sdp: answer.sdp, type: answer.type } });
         } else if (sig.type === 'answer') {
             const pc = this.peers[sig.from];
             if (pc && !pc.currentRemoteDescription) await pc.setRemoteDescription(new RTCSessionDescription(sig.data));
@@ -253,38 +210,11 @@ class GroupCall {
         if (this.audioElements[pid]) { this.audioElements[pid].remove(); delete this.audioElements[pid]; }
     }
 
-    toggleMute() {
-        if (!this.localStream) return;
-        this.muted = !this.muted;
-        this.localStream.getAudioTracks().forEach(t => { t.enabled = !this.muted; });
-        this.updateMuteUI();
-    }
-
-    toggleCam() {
-        if (!this.localStream) return;
-        const tracks = this.localStream.getVideoTracks();
-        if (tracks.length === 0) return;
-        this.camOff = !this.camOff;
-        tracks.forEach(t => { t.enabled = !this.camOff; });
-        this.updateCamUI();
-    }
-
-    updateMuteUI() {
-        const btn = document.getElementById('btn-call-mute');
-        btn.innerText = this.muted ? '🔇' : '🎙️';
-        btn.classList.toggle('muted', this.muted);
-    }
-
-    updateCamUI() {
-        const btn = document.getElementById('btn-call-cam');
-        btn.innerText = this.camOff ? '🚫' : '📷';
-        btn.classList.toggle('cam-off', this.camOff);
-    }
-
-    updateParticipantCount(count) {
-        const el = document.getElementById('call-status');
-        if (el && this.timerInterval) el.innerText = `Участников: ${count}`;
-    }
+    toggleMute() { if (!this.localStream) return; this.muted = !this.muted; this.localStream.getAudioTracks().forEach(t => { t.enabled = !this.muted; }); this.updateMuteUI(); }
+    toggleCam() { if (!this.localStream) return; const vt = this.localStream.getVideoTracks(); if (!vt.length) return; this.camOff = !this.camOff; vt.forEach(t => { t.enabled = !this.camOff; }); this.updateCamUI(); }
+    updateMuteUI() { const b = document.getElementById('btn-call-mute'); b.innerText = this.muted ? '🔇' : '🎙️'; b.classList.toggle('muted', this.muted); }
+    updateCamUI() { const b = document.getElementById('btn-call-cam'); b.innerText = this.camOff ? '🚫' : '📷'; b.classList.toggle('cam-off', this.camOff); }
+    updateCount(c) { const el = document.getElementById('call-status'); if (el && this.timerInterval) el.innerText = `Участников: ${c}`; }
 
     onConnected() {
         document.getElementById('call-status').innerText = 'Подключено';
@@ -293,44 +223,32 @@ class GroupCall {
         if (this.timerInterval) clearInterval(this.timerInterval);
         this.timerInterval = setInterval(() => {
             this.seconds++;
-            document.getElementById('call-timer').innerText =
-                String(Math.floor(this.seconds / 60)).padStart(2, '0') + ':' + String(this.seconds % 60).padStart(2, '0');
+            document.getElementById('call-timer').innerText = String(Math.floor(this.seconds / 60)).padStart(2, '0') + ':' + String(this.seconds % 60).padStart(2, '0');
         }, 1000);
     }
 
     async endCall() {
         this.sounds.playHangup();
-        if (this.roomRef && this.myUid) {
-            const snap = await this.roomRef.get().catch(() => null);
-            const parts = snap?.data()?.participants || [];
+        if (this.roomRef) {
+            // Always mark room as ended + remove self
             await this.roomRef.update({
-                participants: firebase.firestore.FieldValue.arrayRemove(this.myUid)
+                participants: firebase.firestore.FieldValue.arrayRemove(this.myUid),
+                status: 'ended'
             }).catch(() => { });
-            // If I was the last (or only) participant, mark room as ended
-            if (parts.length <= 1) {
-                await this.roomRef.update({ status: 'ended' }).catch(() => { });
-            }
         }
         this.cleanup();
     }
 
     cleanup() {
         this.sounds.stopAll();
-        if (this.timerInterval) clearInterval(this.timerInterval);
-        this.timerInterval = null;
+        if (this.timerInterval) clearInterval(this.timerInterval); this.timerInterval = null;
         if (this.localStream) this.localStream.getTracks().forEach(t => t.stop());
         this.localStream = null;
         Object.keys(this.peers).forEach(id => this._removePeer(id));
         if (this.signalUnsub) this.signalUnsub();
         if (this.roomUnsub) this.roomUnsub();
-        this.signalUnsub = null;
-        this.roomUnsub = null;
-        this.roomRef = null;
-        this.myUid = null;
-
-        // Reset video UI
-        const rv = document.getElementById('remote-video');
-        const lv = document.getElementById('local-video');
+        this.signalUnsub = null; this.roomUnsub = null; this.roomRef = null; this.myUid = null;
+        const rv = document.getElementById('remote-video'), lv = document.getElementById('local-video');
         rv.srcObject = null; rv.classList.add('hidden');
         lv.srcObject = null; lv.classList.add('hidden');
         document.getElementById('btn-call-cam').classList.add('hidden');
@@ -355,9 +273,11 @@ class Vinychat {
         this.voice = new GroupCall(this.sounds);
         this.globalCallUnsubs = [];
         this.pendingCall = null;
-        this.pendingCallUnsub = null;  // listener for call cancellation
+        this.pendingCallUnsub = null;
+        this.seenRoomIds = new Set();       // track already-seen rooms
         this.isMobile = window.innerWidth <= 768;
         this.msgCount = 0;
+        this.appStartTime = Date.now();     // ignore rooms created before app load
         this.bind();
         this.listen();
         this._setupMobile();
@@ -365,14 +285,14 @@ class Vinychat {
     }
 
     _setupMobile() {
-        const handler = async () => {
+        const h = async () => {
             if (this.sounds.ctx && this.sounds.ctx.state === 'suspended') this.sounds.ctx.resume();
             await micManager.preAuth();
-            document.removeEventListener('touchstart', handler);
-            document.removeEventListener('click', handler);
+            document.removeEventListener('touchstart', h);
+            document.removeEventListener('click', h);
         };
-        document.addEventListener('touchstart', handler, { once: true });
-        document.addEventListener('click', handler, { once: true });
+        document.addEventListener('touchstart', h, { once: true });
+        document.addEventListener('click', h, { once: true });
     }
 
     bind() {
@@ -401,20 +321,21 @@ class Vinychat {
 
     listen() {
         auth.onAuthStateChanged(u => {
-            if (u) { this.user = u; this.show('chat'); this.sync(); this.loadChats(); this.checkInvite(); }
-            else { this.user = null; this.globalCallUnsubs.forEach(fn => fn()); this.globalCallUnsubs = []; this.show('auth'); }
+            if (u) {
+                this.user = u;
+                this.appStartTime = Date.now();
+                this.seenRoomIds.clear();
+                this.show('chat'); this.sync(); this.loadChats(); this.checkInvite();
+            } else {
+                this.user = null;
+                this.globalCallUnsubs.forEach(fn => fn()); this.globalCallUnsubs = [];
+                this.show('auth');
+            }
         });
     }
 
-    show(name) {
-        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-        document.getElementById(name + '-screen').classList.add('active');
-    }
-
-    showSidebar() {
-        document.getElementById('sidebar').classList.remove('sidebar-hidden');
-        document.getElementById('active-chat').classList.add('hidden');
-    }
+    show(name) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(name + '-screen').classList.add('active'); }
+    showSidebar() { document.getElementById('sidebar').classList.remove('sidebar-hidden'); document.getElementById('active-chat').classList.add('hidden'); }
     hideSidebar() { if (this.isMobile) document.getElementById('sidebar').classList.add('sidebar-hidden'); }
 
     async sync() {
@@ -446,21 +367,40 @@ class Vinychat {
         });
     }
 
-    /* ── GLOBAL CALL LISTENER ──────── */
+    /* ── GLOBAL CALL LISTENER (FIXED) ── */
     setupGlobalCallListeners() {
         this.globalCallUnsubs.forEach(fn => fn());
         this.globalCallUnsubs = [];
+
         for (const chat of this.chats) {
             const unsub = db.collection('chats').doc(chat.id).collection('rooms')
                 .where('status', '==', 'active')
                 .onSnapshot(snap => {
                     snap.docChanges().forEach(async change => {
                         if (change.type !== 'added') return;
+
+                        const roomId = change.doc.id;
                         const data = change.doc.data();
                         const parts = data.participants || [];
+
+                        // Skip if already seen this room
+                        if (this.seenRoomIds.has(roomId)) return;
+                        this.seenRoomIds.add(roomId);
+
+                        // Skip if we're already in this room
                         if (parts.includes(this.user.uid)) return;
+                        // Skip if already in a call
                         if (this.voice.isActive) return;
+                        // Skip if no participants (stale room)
                         if (parts.length === 0) return;
+
+                        // Skip old rooms (created before app loaded)
+                        const created = data.createdAt?.toDate?.();
+                        if (created && created.getTime() < this.appStartTime - 5000) {
+                            // Auto-clean stale room
+                            change.doc.ref.update({ status: 'ended' }).catch(() => { });
+                            return;
+                        }
 
                         let callerName = 'Звонок';
                         const u = await this.getUser(parts[0]);
@@ -469,10 +409,10 @@ class Vinychat {
                         const isVideo = data.withVideo || false;
                         this.pendingCall = { chatId: chat.id, chat, roomRef: change.doc.ref, isVideo };
 
-                        // Watch for cancellation: if room becomes ended or empty
+                        // Watch for cancellation
                         if (this.pendingCallUnsub) this.pendingCallUnsub();
-                        this.pendingCallUnsub = change.doc.ref.onSnapshot(roomSnap => {
-                            const rd = roomSnap.data();
+                        this.pendingCallUnsub = change.doc.ref.onSnapshot(rs => {
+                            const rd = rs.data();
                             if (!rd || rd.status === 'ended' || (rd.participants || []).length === 0) {
                                 this.dismissIncoming();
                             }
@@ -492,7 +432,6 @@ class Vinychat {
         document.getElementById('incoming-call').classList.remove('hidden');
     }
 
-    // Called when caller cancels — dismiss banner silently
     dismissIncoming() {
         document.getElementById('incoming-call').classList.add('hidden');
         this.sounds.stopAll();
@@ -516,7 +455,6 @@ class Vinychat {
         document.getElementById('call-status').innerText = 'Подключение...';
         document.getElementById('call-timer').classList.add('hidden');
         document.getElementById('call-overlay').classList.remove('hidden');
-
         const ok = await this.voice.joinRoom(chatId, this.user.uid, isVideo);
         if (!ok) document.getElementById('call-overlay').classList.add('hidden');
     }
@@ -536,7 +474,10 @@ class Vinychat {
             if (c.type === 'personal') { const o = await this.getUser(c.participants.find(id => id !== this.user.uid)); name = o?.username || '?'; av = o?.avatar || '?'; }
             const div = document.createElement('div');
             div.className = 'chat-item' + (this.chatId === c.id ? ' active' : '');
-            div.innerHTML = `<div class="avatar">${av}</div><div><div class="ci-name">${name}</div><div class="ci-msg">${c.lastMessage?.text || '...'}</div></div>`;
+            div.innerHTML = `
+                <div class="avatar">${av}</div>
+                <div class="ci-text"><div class="ci-name">${name}</div><div class="ci-msg">${c.lastMessage?.text || '...'}</div></div>
+                <button class="ci-delete" onclick="event.stopPropagation();App.deleteChat('${c.id}','${c.type}')" title="Удалить">✕</button>`;
             div.onclick = () => this.openChat(c.id, { ...c, name, avatar: av });
             el.appendChild(div);
         }
@@ -560,7 +501,6 @@ class Vinychat {
 
     openChat(id, data) {
         this.chatId = id;
-        this._chatData = data;
         document.getElementById('no-chat-selected').classList.add('hidden');
         document.getElementById('active-chat').classList.remove('hidden');
         document.getElementById('active-chat-name').innerText = data.name;
@@ -617,14 +557,33 @@ class Vinychat {
         document.getElementById('call-status').innerText = 'Ожидание...';
         document.getElementById('call-timer').classList.add('hidden');
         document.getElementById('call-overlay').classList.remove('hidden');
-
         this.sounds.startDialing();
         const ok = await this.voice.joinRoom(this.chatId, this.user.uid, withVideo);
         if (!ok) { document.getElementById('call-overlay').classList.add('hidden'); this.sounds.stopAll(); return; }
-
         const emoji = withVideo ? '📹' : '📞';
-        const text = withVideo ? 'Начат видеозвонок' : 'Начат голосовой вызов';
-        await db.collection('chats').doc(this.chatId).collection('messages').add({ senderId: 'system', text: `${emoji} ${text}`, type: 'system', timestamp: firebase.firestore.FieldValue.serverTimestamp() });
+        await db.collection('chats').doc(this.chatId).collection('messages').add({ senderId: 'system', text: `${emoji} ${withVideo ? 'Видеозвонок' : 'Голосовой вызов'}`, type: 'system', timestamp: firebase.firestore.FieldValue.serverTimestamp() });
+    }
+
+    /* ── DELETE CHAT ─────────────── */
+    async deleteChat(chatId, type) {
+        const label = type === 'group' ? 'Покинуть группу?' : 'Удалить чат?';
+        if (!confirm(label)) return;
+
+        // If this is the currently open chat, close it
+        if (this.chatId === chatId) {
+            if (this.unsub) this.unsub();
+            this.chatId = null;
+            document.getElementById('active-chat').classList.add('hidden');
+            document.getElementById('no-chat-selected').classList.remove('hidden');
+        }
+
+        if (type === 'group') {
+            // Leave group
+            await db.collection('chats').doc(chatId).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.user.uid) });
+        } else {
+            // Personal chat: remove self from participants
+            await db.collection('chats').doc(chatId).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.user.uid) });
+        }
     }
 
     /* ── MODALS ─────────────────── */
@@ -653,12 +612,14 @@ class Vinychat {
         const c = this.chats.find(x => x.id === this.chatId); if (!c) return;
         const link = `${location.origin}${location.pathname}?join=${this.chatId}`;
         document.getElementById('modal-title').innerText = 'Настройки чата';
-        document.getElementById('modal-body').innerHTML = `<label style="font-size:12px;color:var(--dim)">Ссылка-приглашение</label><button class="primary-btn" style="width:100%;margin-bottom:12px" onclick="navigator.clipboard.writeText('${link}');alert('Скопировано!')">Скопировать ссылку</button>${c.type === 'group' ? `<button class="primary-btn danger-btn" style="width:100%" onclick="App.leave('${this.chatId}')">Покинуть группу</button>` : ''}`;
+        document.getElementById('modal-body').innerHTML = `
+            <label style="font-size:12px;color:var(--dim)">Ссылка-приглашение</label>
+            <button class="primary-btn" style="width:100%;margin-bottom:12px" onclick="navigator.clipboard.writeText('${link}');alert('Скопировано!')">Скопировать ссылку</button>
+            <button class="primary-btn danger-btn" style="width:100%" onclick="App.deleteChat('${this.chatId}','${c.type}');document.getElementById('modal-container').classList.add('hidden')">${c.type === 'group' ? 'Покинуть группу' : 'Удалить чат'}</button>`;
         document.getElementById('modal-ok').onclick = () => document.getElementById('modal-container').classList.add('hidden');
         document.getElementById('modal-container').classList.remove('hidden');
     }
 
-    async leave(id) { if (confirm('Покинуть группу?')) { await db.collection('chats').doc(id).update({ participants: firebase.firestore.FieldValue.arrayRemove(this.user.uid) }); location.reload(); } }
     createGroup() { const n = prompt('Имя группы:'); if (n) db.collection('chats').add({ name: n, type: 'group', participants: [this.user.uid], createdAt: firebase.firestore.FieldValue.serverTimestamp(), lastMessage: { text: 'Группа создана' } }); }
     esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 }

@@ -231,6 +231,46 @@ body {
     max-width: 180px;
 }
 
+.chat-item .ci-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.ci-delete {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--dim);
+    font-size: 14px;
+    cursor: pointer;
+    opacity: 0;
+    transition: .2s;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chat-item:hover .ci-delete {
+    opacity: 1;
+}
+
+.ci-delete:hover {
+    background: rgba(255, 70, 87, .2);
+    color: #ff4757;
+    opacity: 1;
+}
+
+/* Mobile: always show delete button */
+@media (max-width: 768px) {
+    .ci-delete {
+        opacity: 0.5;
+    }
+}
+
 .create-group-btn {
     margin: 10px;
     padding: 12px;
