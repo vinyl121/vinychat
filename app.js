@@ -269,7 +269,12 @@ class Vinychat {
         const doc = await db.collection('users').doc(this.user.uid).get();
         const defName = this.user.email ? this.user.email.split('@')[0] : 'User';
         const name = doc.exists ? doc.data().username : defName;
-        await db.collection('users').doc(this.user.uid).set({ uid: this.user.uid, username: name, avatar: name[0].toUpperCase() }, { merge: true });
+        await db.collection('users').doc(this.user.uid).set({
+            uid: this.user.uid,
+            username: name,
+            avatar: name[0].toUpperCase(),
+            email: this.user.email || ''
+        }, { merge: true });
         document.getElementById('current-username').innerText = name;
         document.getElementById('current-user-avatar').innerText = name[0].toUpperCase();
     }
@@ -450,19 +455,30 @@ class Vinychat {
     }
 
     async searchUsers(q) {
-        const query = q.trim().toLowerCase();
+        const query = q.trim();
         const resultsEl = document.getElementById('search-results');
         if (!query) { resultsEl.classList.add('hidden'); return; }
 
-        // Firestore doesn't support easy partial string match without external tools like Algolia
-        // But we can use a trick: >= query and <= query + \uf8ff
-        const snap = await db.collection('users')
-            .where('username', '>=', query)
-            .where('username', '<=', query + '\uf8ff')
-            .limit(5).get();
+        try {
+            // Firestore limitation: we need to fetch all users and filter client-side for proper search
+            // For better performance, you could use Algolia or similar service
+            const snap = await db.collection('users').limit(50).get();
 
-        const users = snap.docs.map(d => d.data()).filter(u => u.uid !== this.user.uid);
-        this.renderSearchResults(users);
+            const queryLower = query.toLowerCase();
+            const users = snap.docs
+                .map(d => d.data())
+                .filter(u => {
+                    if (u.uid === this.user.uid) return false; // exclude self
+                    const usernameLower = (u.username || '').toLowerCase();
+                    const emailLower = (u.email || '').toLowerCase();
+                    return usernameLower.includes(queryLower) || emailLower.includes(queryLower);
+                })
+                .slice(0, 5); // limit results
+
+            this.renderSearchResults(users);
+        } catch (e) {
+            console.error('Search error:', e);
+        }
     }
 
     renderSearchResults(users) {
@@ -474,7 +490,8 @@ class Vinychat {
             users.forEach(u => {
                 const item = document.createElement('div');
                 item.className = 'search-res-item';
-                item.innerHTML = `<div class="avatar">${u.avatar}</div><div class="search-res-name">${u.username}</div>`;
+                const email = u.email ? `<div style="font-size:11px;color:var(--dim)">${u.email}</div>` : '';
+                item.innerHTML = `<div class="avatar">${u.avatar}</div><div><div class="search-res-name">${u.username}</div>${email}</div>`;
                 item.onclick = () => {
                     this.startDM(u);
                     el.classList.add('hidden');
