@@ -187,9 +187,12 @@ class Vinychat {
         if (Notification.permission === "default") await Notification.requestPermission();
     }
 
-    notify(title, body) {
+    notify(title, body, chatId = null) {
         if (!("Notification" in window)) return;
-        if (Notification.permission === "granted" && document.visibilityState !== "visible") {
+        const isBackground = document.visibilityState !== "visible";
+        const isDifferentChat = chatId && this.chatId !== chatId;
+
+        if (Notification.permission === "granted" && (isBackground || isDifferentChat)) {
             try { new Notification(title, { body, icon: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }); } catch (e) { console.error(e); }
         }
     }
@@ -409,7 +412,6 @@ class Vinychat {
 
         document.getElementById('call-name').innerText = name;
         document.getElementById('call-status').innerText = 'Подключение...';
-        document.getElementById('call-timer').classList.add('hidden');
         document.getElementById('call-overlay').classList.remove('hidden');
         const ok = await this.voice.joinRoom(chatId, this.user.uid, isVideo);
         if (!ok) document.getElementById('call-overlay').classList.add('hidden');
@@ -529,7 +531,7 @@ class Vinychat {
             const last = docs[docs.length - 1].data();
             if (last.senderId !== this.user.uid && last.senderId !== 'system') {
                 this.sounds.playMsgReceived();
-                this.notify(chatData.name || 'Vinychat', last.text);
+                this.notify(chatData.name || 'Vinychat', last.text, chatData.id);
             }
         }
     }
@@ -551,7 +553,6 @@ class Vinychat {
         const name = document.getElementById('active-chat-name').innerText;
         document.getElementById('call-name').innerText = name;
         document.getElementById('call-status').innerText = 'Ожидание...';
-        document.getElementById('call-timer').classList.add('hidden');
         document.getElementById('call-overlay').classList.remove('hidden');
         this.sounds.startDialing();
         const ok = await this.voice.joinRoom(this.chatId, this.user.uid, withVideo);
