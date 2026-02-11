@@ -143,6 +143,30 @@
         </div>
     </div>
 
+    <!-- MEET LINK INPUT MODAL -->
+    <div id="meet-link-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h3 style="margin:0 0 15px 0; color: var(--accent);">🔗 Создайте встречу</h3>
+            <p style="margin:0 0 15px 0; font-size:14px; color:var(--dim); line-height:1.6;">
+                1. Откройте Google Meet в новой вкладке<br>
+                2. Создайте новую встречу<br>
+                3. Скопируйте ссылку и вставьте сюда:
+            </p>
+            <button id="btn-open-meet"
+                style="width:100%;padding:12px;border:none;border-radius:8px;background:var(--bg-secondary);color:var(--text);cursor:pointer;font-size:14px;margin-bottom:15px;">
+                🌐 Открыть Google Meet
+            </button>
+            <input type="text" id="meet-link-input" placeholder="https://meet.google.com/xxx-yyyy-zzz"
+                style="width:100%;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg-secondary);color:var(--text);font-size:14px;margin-bottom:15px;">
+            <div style="display:flex;gap:10px;">
+                <button id="btn-meet-link-cancel"
+                    style="flex:1;padding:12px;border:none;border-radius:8px;background:var(--bg-secondary);color:var(--text);cursor:pointer;font-size:14px;">Отмена</button>
+                <button id="btn-meet-link-ok"
+                    style="flex:2;padding:12px;border:none;border-radius:8px;background:var(--accent);color:white;cursor:pointer;font-size:14px;font-weight:600;">Подключить</button>
+            </div>
+        </div>
+    </div>
+
     <script src="app.js"></script>
 </body>
 

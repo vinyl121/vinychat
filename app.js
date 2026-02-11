@@ -134,43 +134,85 @@ class GroupCall {
     }
 
     async startGoogleMeet() {
-        // Открываем Google Meet для создания встречи
-        window.open('https://meet.google.com/new', '_blank');
-
-        // Ждем пока пользователь создаст встречу
-        const link = prompt(
-            "Создайте встречу и вставьте ссылку:\n\n" +
-            "1. Нажмите 'Новая встреча' → 'Начать встречу с мгновенным запуском'\n" +
-            "2. Скопируйте ссылку из адресной строки\n" +
-            "3. Вставьте её сюда"
-        );
-
-        if (!link) {
-            // Отмена - завершаем звонок
-            this.endCall();
-            return;
+        // Открываем Google Meet для создания встречи (только на десктопе)
+        // На мобильных не открываем автоматически - там открывается приложение вместо браузера
+        if (!this.app.isMobile) {
+            window.open('https://meet.google.com/new', '_blank');
         }
 
-        // Проверяем что это правильная ссылка Meet
-        if (!link.includes('meet.google.com/')) {
-            alert('Неправильная ссылка! Нужна ссылка формата: https://meet.google.com/xxx-yyyy-zzz');
-            this.endCall();
-            return;
-        }
+        // Показываем модальное окно для ввода ссылки
+        const modal = document.getElementById('meet-link-modal');
+        const input = document.getElementById('meet-link-input');
+        const btnOk = document.getElementById('btn-meet-link-ok');
+        const btnCancel = document.getElementById('btn-meet-link-cancel');
 
-        // Сохраняем ссылку в Firebase
-        await this.roomRef.collection('signals').add({
-            from: this.myUid,
-            type: 'google_meet_link',
-            link: link.trim(),
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        modal.classList.remove('hidden');
+        input.value = '';
+        input.focus();
+
+        // Возвращаем Promise для асинхронного ожидания
+        return new Promise((resolve) => {
+            const handleOk = async () => {
+                const link = input.value.trim();
+
+                if (!link) {
+                    alert('Введите ссылку!');
+                    return;
+                }
+
+                // Проверяем что это правильная ссылка Meet
+                if (!link.includes('meet.google.com/')) {
+                    alert('Неправильная ссылка! Нужна ссылка формата: https://meet.google.com/xxx-yyyy-zzz');
+                    return;
+                }
+
+                cleanup();
+                modal.classList.add('hidden');
+
+                // Сохраняем ссылку в Firebase
+                await this.roomRef.collection('signals').add({
+                    from: this.myUid,
+                    type: 'google_meet_link',
+                    link: link,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                const statusEl = document.getElementById('call-status');
+                if (statusEl) statusEl.innerText = 'Встреча создана. Ожидание...';
+
+                resolve(true);
+            };
+
+            const handleCancel = () => {
+                cleanup();
+                modal.classList.add('hidden');
+                this.endCall();
+                resolve(false);
+            };
+
+            const cleanup = () => {
+                btnOk.removeEventListener('click', handleOk);
+                btnCancel.removeEventListener('click', handleCancel);
+                input.removeEventListener('keypress', handleEnter);
+                const btnOpenMeet = document.getElementById('btn-open-meet');
+                if (btnOpenMeet) btnOpenMeet.removeEventListener('click', handleOpenMeet);
+            };
+
+            const handleEnter = (e) => {
+                if (e.key === 'Enter') handleOk();
+            };
+
+            const handleOpenMeet = () => {
+                window.open('https://meet.google.com/new', '_blank');
+            };
+
+            const btnOpenMeet = document.getElementById('btn-open-meet');
+
+            btnOk.addEventListener('click', handleOk);
+            btnCancel.addEventListener('click', handleCancel);
+            input.addEventListener('keypress', handleEnter);
+            if (btnOpenMeet) btnOpenMeet.addEventListener('click', handleOpenMeet);
         });
-
-        const statusEl = document.getElementById('call-status');
-        if (statusEl) statusEl.innerText = 'Встреча создана. Ожидание...';
-
-        // НЕ открываем встречу здесь - listener сделает это автоматически
-        // Это предотвращает двойное открытие вкладок
     }
 
     async endCall() {
