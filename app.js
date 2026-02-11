@@ -60,21 +60,34 @@ class CallSounds {
    ═══════════════════════════════════ */
 
 /* ═══════════════════════════════════
-   GROUP CALL (Google Meet Bridge)
+   WEBRTC AUDIO CALL ENGINE
    ═══════════════════════════════════ */
 class GroupCall {
     constructor(sounds) {
         this.sounds = sounds;
         this.roomRef = null;
         this.roomId = null;
-        this.signalUnsub = null;
-        this.roomUnsub = null;
         this.myUid = null;
         this._isActive = false;
+        this.peerConnection = null;
+        this.localStream = null;
+        this.remoteStream = null;
+        this.signalUnsub = null;
+        this.roomUnsub = null;
+
+        // Google's free STUN servers
+        this.iceServers = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
     }
 
+    get isActive() { return this._isActive; }
+
     async joinRoom(chatId, uid, withVideo = false) {
-        console.log('--- Вход в комнату (Meet Bridge) ---');
+        console.log('[CALL] Joining room...');
         this.myUid = uid;
         this._isActive = true;
 
@@ -82,22 +95,24 @@ class GroupCall {
         const existingRooms = await db.collection('chats').doc(chatId).collection('rooms')
             .where('status', '==', 'active').limit(1).get();
 
+        let isInitiator = false;
+
         if (!existingRooms.empty) {
-            // Присоединяемся к существующей комнате
+            // Присоединяемся к существующей комнате (мы - получатель)
             this.roomRef = existingRooms.docs[0].ref;
             await this.roomRef.update({
                 participants: firebase.firestore.FieldValue.arrayUnion(uid)
             });
-            console.log('Joined existing room');
+            console.log('[CALL] Joined existing room as receiver');
         } else {
-            // Создаем новую комнату
+            // Создаем новую комнату (мы - инициатор)
             this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
                 status: 'active',
                 participants: [uid],
-                withVideo,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
-            console.log('Created new room');
+            isInitiator = true;
+            console.log('[CALL] Created new room as initiator');
         }
 
         this.roomId = this.roomRef.id;
@@ -105,114 +120,120 @@ class GroupCall {
         // Следим за состоянием комнаты
         this.roomUnsub = this.roomRef.onSnapshot(snap => {
             const data = snap.data();
-            if (!data || data.status === 'ended') { this.cleanup(); return; }
+            if (!data || data.status === 'ended') {
+                console.log('[CALL] Room ended');
+                this.cleanup();
+            }
         });
 
-        // Слушаем ссылки на Meet
-        this.signalUnsub = this.roomRef.collection('signals').where('type', '==', 'google_meet_link')
-            .onSnapshot(snap => {
-                snap.docChanges().forEach(ch => {
-                    if (ch.type === 'added') {
-                        const link = ch.doc.data().link;
-                        const statusEl = document.getElementById('call-status');
-                        if (statusEl) statusEl.innerText = 'Подключение к встрече...';
-                        this.sounds.playMsgReceived();
+        // Получаем микрофон
+        try {
+            this.localStream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: false
+            });
+            console.log('[CALL] Got local stream');
+        } catch (err) {
+            console.error('[CALL] Error getting media:', err);
+            alert('Не удалось получить доступ к микрофону!');
+            this.endCall();
+            return false;
+        }
 
-                        // Автоматически открываем встречу для получателя
-                        setTimeout(() => {
-                            window.open(link, '_blank');
-                        }, 500);
+        // Создаем peer connection
+        this.peerConnection = new RTCPeerConnection(this.iceServers);
+
+        // Добавляем локальный stream
+        this.localStream.getTracks().forEach(track => {
+            this.peerConnection.addTrack(track, this.localStream);
+        });
+
+        // Слушаем удаленный stream
+        this.remoteStream = new MediaStream();
+        const remoteAudio = document.getElementById('remote-audio');
+        if (remoteAudio) {
+            remoteAudio.srcObject = this.remoteStream;
+        }
+
+        this.peerConnection.ontrack = (event) => {
+            console.log('[CALL] Got remote track');
+            event.streams[0].getTracks().forEach(track => {
+                this.remoteStream.addTrack(track);
+            });
+        };
+
+        // Слушаем ICE candidates
+        this.peerConnection.onicecandidate = async (event) => {
+            if (event.candidate) {
+                console.log('[CALL] New ICE candidate');
+                await this.roomRef.collection('candidates').add({
+                    candidate: event.candidate.toJSON(),
+                    from: this.myUid
+                });
+            }
+        };
+
+        // Слушаем сигналы (offer/answer)
+        this.signalUnsub = this.roomRef.collection('signals').onSnapshot(async (snapshot) => {
+            for (const change of snapshot.docChanges()) {
+                if (change.type === 'added') {
+                    const data = change.doc.data();
+
+                    if (data.type === 'offer' && data.from !== this.myUid) {
+                        console.log('[CALL] Received offer');
+                        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                        const answer = await this.peerConnection.createAnswer();
+                        await this.peerConnection.setLocalDescription(answer);
+
+                        await this.roomRef.collection('signals').add({
+                            type: 'answer',
+                            answer: answer,
+                            from: this.myUid
+                        });
+                        console.log('[CALL] Sent answer');
+
+                        const statusEl = document.getElementById('call-status');
+                        if (statusEl) statusEl.innerText = 'Подключено';
+                    } else if (data.type === 'answer' && data.from !== this.myUid) {
+                        console.log('[CALL] Received answer');
+                        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+
+                        const statusEl = document.getElementById('call-status');
+                        if (statusEl) statusEl.innerText = 'Подключено';
+                    }
+                }
+            }
+        });
+
+        // Слушаем ICE candidates от собеседника
+        this.roomRef.collection('candidates').where('from', '!=', this.myUid)
+            .onSnapshot(snapshot => {
+                snapshot.docChanges().forEach(async (change) => {
+                    if (change.type === 'added') {
+                        const candidate = new RTCIceCandidate(change.doc.data().candidate);
+                        await this.peerConnection.addIceCandidate(candidate);
+                        console.log('[CALL] Added ICE candidate');
                     }
                 });
             });
 
-        // Инициатор создает встречу (только если создал новую комнату)
-        if (existingRooms.empty) {
-            this.startGoogleMeet();
+        // Если мы инициатор - создаем offer
+        if (isInitiator) {
+            const offer = await this.peerConnection.createOffer();
+            await this.peerConnection.setLocalDescription(offer);
+
+            await this.roomRef.collection('signals').add({
+                type: 'offer',
+                offer: offer,
+                from: this.myUid
+            });
+            console.log('[CALL] Sent offer');
+
+            const statusEl = document.getElementById('call-status');
+            if (statusEl) statusEl.innerText = 'Ожидание ответа...';
         }
+
         return true;
-    }
-
-    async startGoogleMeet() {
-        // Открываем Google Meet для создания встречи (только на десктопе)
-        // На мобильных не открываем автоматически - там открывается приложение вместо браузера
-        if (!this.app.isMobile) {
-            window.open('https://meet.google.com/new', '_blank');
-        }
-
-        // Показываем модальное окно для ввода ссылки
-        const modal = document.getElementById('meet-link-modal');
-        const input = document.getElementById('meet-link-input');
-        const btnOk = document.getElementById('btn-meet-link-ok');
-        const btnCancel = document.getElementById('btn-meet-link-cancel');
-
-        modal.classList.remove('hidden');
-        input.value = '';
-        input.focus();
-
-        // Возвращаем Promise для асинхронного ожидания
-        return new Promise((resolve) => {
-            const handleOk = async () => {
-                const link = input.value.trim();
-
-                if (!link) {
-                    alert('Введите ссылку!');
-                    return;
-                }
-
-                // Проверяем что это правильная ссылка Meet
-                if (!link.includes('meet.google.com/')) {
-                    alert('Неправильная ссылка! Нужна ссылка формата: https://meet.google.com/xxx-yyyy-zzz');
-                    return;
-                }
-
-                cleanup();
-                modal.classList.add('hidden');
-
-                // Сохраняем ссылку в Firebase
-                await this.roomRef.collection('signals').add({
-                    from: this.myUid,
-                    type: 'google_meet_link',
-                    link: link,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
-                });
-
-                const statusEl = document.getElementById('call-status');
-                if (statusEl) statusEl.innerText = 'Встреча создана. Ожидание...';
-
-                resolve(true);
-            };
-
-            const handleCancel = () => {
-                cleanup();
-                modal.classList.add('hidden');
-                this.endCall();
-                resolve(false);
-            };
-
-            const cleanup = () => {
-                btnOk.removeEventListener('click', handleOk);
-                btnCancel.removeEventListener('click', handleCancel);
-                input.removeEventListener('keypress', handleEnter);
-                const btnOpenMeet = document.getElementById('btn-open-meet');
-                if (btnOpenMeet) btnOpenMeet.removeEventListener('click', handleOpenMeet);
-            };
-
-            const handleEnter = (e) => {
-                if (e.key === 'Enter') handleOk();
-            };
-
-            const handleOpenMeet = () => {
-                window.open('https://meet.google.com/new', '_blank');
-            };
-
-            const btnOpenMeet = document.getElementById('btn-open-meet');
-
-            btnOk.addEventListener('click', handleOk);
-            btnCancel.addEventListener('click', handleCancel);
-            input.addEventListener('keypress', handleEnter);
-            if (btnOpenMeet) btnOpenMeet.addEventListener('click', handleOpenMeet);
-        });
     }
 
     async endCall() {
@@ -228,13 +249,36 @@ class GroupCall {
     }
 
     cleanup() {
+        console.log('[CALL] Cleanup');
         this._isActive = false;
         this.sounds.stopAll();
+
+        // Закрываем peer connection
+        if (this.peerConnection) {
+            this.peerConnection.close();
+            this.peerConnection = null;
+        }
+
+        // Останавливаем локальный stream
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => track.stop());
+            this.localStream = null;
+        }
+
+        // Очищаем удаленный stream
+        if (this.remoteStream) {
+            this.remoteStream.getTracks().forEach(track => track.stop());
+            this.remoteStream = null;
+        }
+
+        // Отписываемся от listeners
         if (this.signalUnsub) { this.signalUnsub(); this.signalUnsub = null; }
         if (this.roomUnsub) { this.roomUnsub(); this.roomUnsub = null; }
+
         this.roomRef = null;
         this.roomId = null;
         this.myUid = null;
+
         document.getElementById('call-overlay').classList.add('hidden');
     }
 
