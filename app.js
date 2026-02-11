@@ -18,6 +18,15 @@ if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
+// Инициализация Firebase Cloud Messaging для push-уведомлений
+let messaging = null;
+try {
+    messaging = firebase.messaging();
+    console.log('Firebase Messaging initialized');
+} catch (e) {
+    console.warn('Firebase Messaging not supported:', e);
+}
+
 /* ═══════════════════════════════════
    SOUND ENGINE
    ═══════════════════════════════════ */
@@ -122,30 +131,40 @@ class GroupCall {
         // Открываем Google Meet для создания встречи
         window.open('https://meet.google.com/new', '_blank');
 
-        // Простой промпт для ввода ссылки
+        // Ждем пока пользователь создаст встречу
         const link = prompt(
-            "Вставьте ссылку на Google Meet:\n" +
-            "(Нажмите 'Новая встреча' → 'Создать' и скопируйте ссылку)"
+            "Создайте встречу и вставьте ссылку:\n\n" +
+            "1. Нажмите 'Новая встреча' → 'Начать встречу с мгновенным запуском'\n" +
+            "2. Скопируйте ссылку из адресной строки\n" +
+            "3. Вставьте её сюда"
         );
 
-        if (link && link.includes('meet.google.com')) {
-            // Сохраняем ссылку
-            await this.roomRef.collection('signals').add({
-                from: this.myUid,
-                type: 'google_meet_link',
-                link: link.trim(),
-                timestamp: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
-            const statusEl = document.getElementById('call-status');
-            if (statusEl) statusEl.innerText = 'Подключение...';
-
-            // Открываем встречу
-            window.open(link.trim(), '_blank');
-        } else {
+        if (!link) {
             // Отмена - завершаем звонок
             this.endCall();
+            return;
         }
+
+        // Проверяем что это правильная ссылка Meet
+        if (!link.includes('meet.google.com/')) {
+            alert('Неправильная ссылка! Нужна ссылка формата: https://meet.google.com/xxx-yyyy-zzz');
+            this.endCall();
+            return;
+        }
+
+        // Сохраняем ссылку в Firebase
+        await this.roomRef.collection('signals').add({
+            from: this.myUid,
+            type: 'google_meet_link',
+            link: link.trim(),
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        const statusEl = document.getElementById('call-status');
+        if (statusEl) statusEl.innerText = 'Встреча создана. Ожидание...';
+
+        // НЕ открываем встречу здесь - listener сделает это автоматически
+        // Это предотвращает двойное открытие вкладок
     }
 
     async endCall() {
@@ -207,6 +226,53 @@ class Vinychat {
         if (Notification.permission === "default") {
             const result = await Notification.requestPermission();
             console.log('Notification permission:', result);
+
+            // После получения разрешения регистрируем FCM
+            if (result === "granted") {
+                await this.setupFCM();
+            }
+        } else if (Notification.permission === "granted") {
+            // Если разрешение уже есть, просто регистрируем FCM
+            await this.setupFCM();
+        }
+    }
+
+    async setupFCM() {
+        if (!messaging) return;
+
+        try {
+            // Регистрация Service Worker
+            const registration = await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+            console.log('Service Worker registered:', registration);
+
+            // Получение FCM токена
+            const currentToken = await messaging.getToken({
+                vapidKey: 'BN_UkWdeZJ8QKRGzRAM1tgWOowmutQhnsdTmJ1ZmEf11RXVxI2z5CcBZF4lCrmGWnCJk13uJlst2LdMoTUirbjw',
+                serviceWorkerRegistration: registration
+            });
+
+            if (currentToken && this.user) {
+                console.log('FCM Token:', currentToken);
+                // Сохраняем токен в Firestore
+                await db.collection('users').doc(this.user.uid).update({
+                    fcmToken: currentToken,
+                    tokenUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                console.log('FCM token saved to Firestore');
+
+                // Слушаем сообщения когда приложение открыто
+                messaging.onMessage((payload) => {
+                    console.log('Message received in foreground:', payload);
+                    const title = payload.notification?.title || 'Vinychat';
+                    const body = payload.notification?.body || 'Новое сообщение';
+                    this.notify(title, body, payload.data?.chatId);
+                    this.sounds.playMsgReceived();
+                });
+            } else {
+                console.warn('No FCM token available');
+            }
+        } catch (err) {
+            console.error('Error setting up FCM:', err);
         }
     }
 
