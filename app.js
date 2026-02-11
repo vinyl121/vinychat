@@ -119,32 +119,33 @@ class GroupCall {
     }
 
     async startGoogleMeet() {
-        // Автоматически генерируем уникальный код комнаты
-        const roomCode = this.generateMeetCode();
-        const meetLink = `https://meet.google.com/${roomCode}`;
+        // Открываем Google Meet для создания встречи
+        window.open('https://meet.google.com/new', '_blank');
 
-        // Сохраняем ссылку в Firebase
-        await this.roomRef.collection('signals').add({
-            from: this.myUid,
-            type: 'google_meet_link',
-            link: meetLink,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        // Простой промпт для ввода ссылки
+        const link = prompt(
+            "Вставьте ссылку на Google Meet:\n" +
+            "(Нажмите 'Новая встреча' → 'Создать' и скопируйте ссылку)"
+        );
 
-        const statusEl = document.getElementById('call-status');
-        if (statusEl) statusEl.innerText = 'Подключение к встрече...';
+        if (link && link.includes('meet.google.com')) {
+            // Сохраняем ссылку
+            await this.roomRef.collection('signals').add({
+                from: this.myUid,
+                type: 'google_meet_link',
+                link: link.trim(),
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
 
-        // Автоматически открываем встречу для инициатора
-        setTimeout(() => {
-            window.open(meetLink, '_blank');
-        }, 500);
-    }
+            const statusEl = document.getElementById('call-status');
+            if (statusEl) statusEl.innerText = 'Подключение...';
 
-    generateMeetCode() {
-        // Генерируем код в формате xxx-yyyy-zzz (как у Google Meet)
-        const chars = 'abcdefghijklmnopqrstuvwxyz';
-        const part = () => Array.from({ length: 3 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-        return `${part()}-${part()}-${part()}`;
+            // Открываем встречу
+            window.open(link.trim(), '_blank');
+        } else {
+            // Отмена - завершаем звонок
+            this.endCall();
+        }
     }
 
     async endCall() {
@@ -203,16 +204,35 @@ class Vinychat {
 
     async requestNotify() {
         if (!("Notification" in window)) return;
-        if (Notification.permission === "default") await Notification.requestPermission();
+        if (Notification.permission === "default") {
+            const result = await Notification.requestPermission();
+            console.log('Notification permission:', result);
+        }
     }
 
     notify(title, body, chatId = null) {
         if (!("Notification" in window)) return;
+        if (Notification.permission !== "granted") return;
+
         const isBackground = document.visibilityState !== "visible";
         const isDifferentChat = chatId && this.chatId !== chatId;
 
-        if (Notification.permission === "granted" && (isBackground || isDifferentChat)) {
-            try { new Notification(title, { body, icon: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }); } catch (e) { console.error(e); }
+        // Показываем уведомление если:
+        // 1. Вкладка в фоне (свернута)
+        // 2. Сообщение в другом чате
+        // 3. Мобильное устройство (экран может быть заблокирован)
+        if (isBackground || isDifferentChat || this.isMobile) {
+            try {
+                new Notification(title, {
+                    body,
+                    icon: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+                    badge: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+                    tag: chatId || 'vinychat',
+                    requireInteraction: false
+                });
+            } catch (e) {
+                console.error('Notification error:', e);
+            }
         }
     }
 
@@ -270,6 +290,8 @@ class Vinychat {
                 this._listeningChatIds.clear();
                 this._notifiedRoomIds.clear();
                 this.show('chat'); this.sync(); this.loadChats(); this.checkInvite();
+                // Запрашиваем разрешение на уведомления сразу после входа
+                this.requestNotify();
             } else {
                 this.user = null;
                 this.globalCallUnsubs.forEach(fn => fn()); this.globalCallUnsubs = [];
@@ -430,9 +452,22 @@ class Vinychat {
         const { chatId, chat, isVideo } = this.pendingCall;
         this.pendingCall = null;
 
-        let name = chat.name || 'Группа', av = '👥';
-        if (chat.type === 'personal') { const o = await this.getUser(chat.participants.find(id => id !== this.user.uid)); name = o?.username || '?'; av = o?.avatar || '?'; }
-        this.openChat(chatId, { ...chat, name, avatar: av });
+        // Получаем имя только если чат еще не открыт
+        let name = chat.name || 'Группа';
+        if (chat.type === 'personal') {
+            const o = await this.getUser(chat.participants.find(id => id !== this.user.uid));
+            name = o?.username || '?';
+        }
+
+        // Открываем чат ТОЛЬКО если он еще не открыт
+        if (this.chatId !== chatId) {
+            let av = '👥';
+            if (chat.type === 'personal') {
+                const o = await this.getUser(chat.participants.find(id => id !== this.user.uid));
+                av = o?.avatar || '?';
+            }
+            this.openChat(chatId, { ...chat, name, avatar: av });
+        }
 
         document.getElementById('call-name').innerText = name;
         document.getElementById('call-status').innerText = 'Подключение...';
