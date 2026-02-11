@@ -548,15 +548,28 @@ class Vinychat {
 
     /* ── CALLS ───────────────────── */
     async initiateCall(withVideo) {
-        if (!this.chatId) return;
+        console.log('initiateCall called, withVideo:', withVideo);
+        if (!this.chatId) { console.warn('No chatId'); return; }
         if (this.voice.isActive) { alert('Вы уже в звонке'); return; }
-        const name = document.getElementById('active-chat-name').innerText;
-        document.getElementById('call-name').innerText = name;
-        document.getElementById('call-status').innerText = 'Ожидание...';
-        document.getElementById('call-overlay').classList.remove('hidden');
+
+        const nameEl = document.getElementById('active-chat-name');
+        const callNameEl = document.getElementById('call-name');
+        const callStatusEl = document.getElementById('call-status');
+        const callOverlayEl = document.getElementById('call-overlay');
+
+        if (!nameEl || !callNameEl || !callStatusEl || !callOverlayEl) {
+            console.error('Missing call UI elements:', { nameEl, callNameEl, callStatusEl, callOverlayEl });
+            alert('Ошибка интерфейса звонка. Перезагрузите страницу.');
+            return;
+        }
+
+        const name = nameEl.innerText;
+        callNameEl.innerText = name;
+        callStatusEl.innerText = 'Ожидание...';
+        callOverlayEl.classList.remove('hidden');
         this.sounds.startDialing();
         const ok = await this.voice.joinRoom(this.chatId, this.user.uid, withVideo);
-        if (!ok) { document.getElementById('call-overlay').classList.add('hidden'); this.sounds.stopAll(); return; }
+        if (!ok) { callOverlayEl.classList.add('hidden'); this.sounds.stopAll(); return; }
         const emoji = withVideo ? '📹' : '📞';
         await db.collection('chats').doc(this.chatId).collection('messages').add({ senderId: 'system', text: `${emoji} ${withVideo ? 'Видеозвонок' : 'Голосовой вызов'}`, type: 'system', timestamp: firebase.firestore.FieldValue.serverTimestamp() });
     }

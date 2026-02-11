@@ -195,6 +195,7 @@ body {
     padding: 12px;
     position: relative;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
 }
 
 .search-box input {
