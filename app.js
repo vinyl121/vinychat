@@ -133,6 +133,9 @@ class GroupCall {
                 video: false
             });
             console.log('[CALL] Got local stream');
+
+            // Останавливаем звук звонка, если он еще играет
+            this.sounds.stopAll();
         } catch (err) {
             console.error('[CALL] Error getting media:', err);
             alert('Не удалось получить доступ к микрофону!');
