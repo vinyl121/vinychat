@@ -190,6 +190,75 @@ body {
     color: #fff;
 }
 
+/* SEARCH BOX */
+.search-box {
+    padding: 12px;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+}
+
+.search-box input {
+    width: 100%;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: #fff;
+    outline: none;
+    font-size: 13px;
+    transition: .2s;
+}
+
+.search-box input:focus {
+    border-color: var(--primary);
+    background: rgba(255, 255, 255, .08);
+}
+
+.search-results {
+    position: absolute;
+    top: 100%;
+    left: 10px;
+    right: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    z-index: 200;
+    max-height: 250px;
+    overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+    backdrop-filter: blur(10px);
+    margin-top: 5px;
+}
+
+.search-res-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    cursor: pointer;
+    transition: .15s;
+    border-bottom: 1px solid var(--border);
+}
+
+.search-res-item:last-child {
+    border-bottom: none;
+}
+
+.search-res-item:hover {
+    background: rgba(255, 255, 255, .05);
+}
+
+.search-res-item .avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+}
+
+.search-res-name {
+    font-size: 13px;
+    font-weight: 600;
+}
+
 /* CHAT LIST */
 .chat-list {
     flex: 1;

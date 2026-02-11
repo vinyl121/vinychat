@@ -230,6 +230,15 @@ class Vinychat {
         safeBind('btn-back', () => this.showSidebar());
         safeBind('btn-accept-call', () => this.acceptIncoming());
         safeBind('btn-decline-call', () => this.declineIncoming());
+
+        const searchInp = $('user-search-input');
+        if (searchInp) {
+            searchInp.oninput = () => this.searchUsers(searchInp.value);
+            searchInp.onfocus = () => { if (searchInp.value) $('search-results').classList.remove('hidden'); };
+        }
+        document.addEventListener('click', e => {
+            if (!e.target.closest('.search-box')) $('search-results').classList.add('hidden');
+        });
     }
 
     listen() {
@@ -436,6 +445,43 @@ class Vinychat {
         const d = await db.collection('users').doc(uid).get();
         if (d.exists) { this.cache[uid] = d.data(); return d.data(); }
         return null;
+    }
+
+    async searchUsers(q) {
+        const query = q.trim().toLowerCase();
+        const resultsEl = document.getElementById('search-results');
+        if (!query) { resultsEl.classList.add('hidden'); return; }
+
+        // Firestore doesn't support easy partial string match without external tools like Algolia
+        // But we can use a trick: >= query and <= query + \uf8ff
+        const snap = await db.collection('users')
+            .where('username', '>=', query)
+            .where('username', '<=', query + '\uf8ff')
+            .limit(5).get();
+
+        const users = snap.docs.map(d => d.data()).filter(u => u.uid !== this.user.uid);
+        this.renderSearchResults(users);
+    }
+
+    renderSearchResults(users) {
+        const el = document.getElementById('search-results');
+        el.innerHTML = '';
+        if (users.length === 0) {
+            el.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--dim);text-align:center">Никто не найден</div>';
+        } else {
+            users.forEach(u => {
+                const item = document.createElement('div');
+                item.className = 'search-res-item';
+                item.innerHTML = `<div class="avatar">${u.avatar}</div><div class="search-res-name">${u.username}</div>`;
+                item.onclick = () => {
+                    this.startDM(u);
+                    el.classList.add('hidden');
+                    document.getElementById('user-search-input').value = '';
+                };
+                el.appendChild(item);
+            });
+        }
+        el.classList.remove('hidden');
     }
 
     async startDM(other) {

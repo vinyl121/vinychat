@@ -53,9 +53,12 @@
                         <button id="btn-settings" class="small-btn" title="Профиль">⚙️</button>
                         <button id="btn-logout" class="small-btn logout-btn" title="Выход">✕</button>
                     </div>
-                </div>
-                <div id="chat-list" class="chat-list"></div>
-                <button id="btn-create-group" class="create-group-btn">+ Создать группу</button>
+                    <div class="search-box">
+                        <input type="text" id="user-search-input" placeholder="Поиск людей..." autocomplete="off">
+                        <div id="search-results" class="search-results hidden"></div>
+                    </div>
+                    <div id="chat-list" class="chat-list"></div>
+                    <button id="btn-create-group" class="create-group-btn">+ Создать группу</button>
             </aside>
 
             <main class="main-area" id="main-area">
