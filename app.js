@@ -78,23 +78,27 @@ class GroupCall {
         this.myUid = uid;
         this._isActive = true;
 
-        // Сначала завершаем все старые активные комнаты
-        const oldRooms = await db.collection('chats').doc(chatId).collection('rooms')
-            .where('status', '==', 'active').get();
+        // Проверяем есть ли уже активная комната
+        const existingRooms = await db.collection('chats').doc(chatId).collection('rooms')
+            .where('status', '==', 'active').limit(1).get();
 
-        const batch = db.batch();
-        oldRooms.docs.forEach(doc => {
-            batch.update(doc.ref, { status: 'ended' });
-        });
-        await batch.commit();
-
-        // Создаем новую комнату
-        this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
-            status: 'active',
-            participants: [uid],
-            withVideo,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        if (!existingRooms.empty) {
+            // Присоединяемся к существующей комнате
+            this.roomRef = existingRooms.docs[0].ref;
+            await this.roomRef.update({
+                participants: firebase.firestore.FieldValue.arrayUnion(uid)
+            });
+            console.log('Joined existing room');
+        } else {
+            // Создаем новую комнату
+            this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
+                status: 'active',
+                participants: [uid],
+                withVideo,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            console.log('Created new room');
+        }
 
         this.roomId = this.roomRef.id;
 
@@ -122,8 +126,10 @@ class GroupCall {
                 });
             });
 
-        // Инициатор сразу создает встречу
-        this.startGoogleMeet();
+        // Инициатор создает встречу (только если создал новую комнату)
+        if (existingRooms.empty) {
+            this.startGoogleMeet();
+        }
         return true;
     }
 
@@ -277,28 +283,31 @@ class Vinychat {
     }
 
     notify(title, body, chatId = null) {
-        if (!("Notification" in window)) return;
-        if (Notification.permission !== "granted") return;
+        console.log('[NOTIFY] Called:', { title, body, chatId });
 
-        const isBackground = document.visibilityState !== "visible";
-        const isDifferentChat = chatId && this.chatId !== chatId;
+        if (!("Notification" in window)) {
+            console.warn('[NOTIFY] Not supported');
+            return;
+        }
 
-        // Показываем уведомление если:
-        // 1. Вкладка в фоне (свернута)
-        // 2. Сообщение в другом чате
-        // 3. Мобильное устройство (экран может быть заблокирован)
-        if (isBackground || isDifferentChat || this.isMobile) {
-            try {
-                new Notification(title, {
-                    body,
-                    icon: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
-                    badge: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
-                    tag: chatId || 'vinychat',
-                    requireInteraction: false
-                });
-            } catch (e) {
-                console.error('Notification error:', e);
-            }
+        if (Notification.permission !== "granted") {
+            console.warn('[NOTIFY] Permission:', Notification.permission);
+            return;
+        }
+
+        // Показываем уведомление ВСЕГДА
+        try {
+            const notification = new Notification(title, {
+                body,
+                icon: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+                badge: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+                tag: chatId || 'vinychat',
+                requireInteraction: false,
+                silent: false
+            });
+            console.log('[NOTIFY] Created successfully');
+        } catch (e) {
+            console.error('[NOTIFY] Error:', e);
         }
     }
 
