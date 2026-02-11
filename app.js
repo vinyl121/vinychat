@@ -101,14 +101,14 @@ class GroupCall {
                 snap.docChanges().forEach(ch => {
                     if (ch.type === 'added') {
                         const link = ch.doc.data().link;
-                        const joinBtn = document.getElementById('btn-join-meet');
-                        if (joinBtn) {
-                            joinBtn.onclick = () => window.open(link, '_blank');
-                            joinBtn.classList.remove('hidden');
-                        }
                         const statusEl = document.getElementById('call-status');
-                        if (statusEl) statusEl.innerText = 'Нажмите кнопку для входа в Meet';
+                        if (statusEl) statusEl.innerText = 'Подключение к встрече...';
                         this.sounds.playMsgReceived();
+
+                        // Автоматически открываем встречу для получателя
+                        setTimeout(() => {
+                            window.open(link, '_blank');
+                        }, 500);
                     }
                 });
             });
@@ -119,33 +119,32 @@ class GroupCall {
     }
 
     async startGoogleMeet() {
-        // Автоматически создаем встречу и открываем в новой вкладке
-        const meetUrl = 'https://meet.google.com/new';
-        const meetWindow = window.open(meetUrl, '_blank');
+        // Автоматически генерируем уникальный код комнаты
+        const roomCode = this.generateMeetCode();
+        const meetLink = `https://meet.google.com/${roomCode}`;
 
-        const link = prompt(
-            "Google Meet откроется в новой вкладке.\n\n" +
-            "1. Нажмите 'Новая встреча' → 'Начать встречу с мгновенным запуском'\n" +
-            "2. Скопируйте ссылку на встречу\n" +
-            "3. Вставьте её сюда:"
-        );
+        // Сохраняем ссылку в Firebase
+        await this.roomRef.collection('signals').add({
+            from: this.myUid,
+            type: 'google_meet_link',
+            link: meetLink,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
 
-        if (link && link.includes('meet.google.com')) {
-            await this.roomRef.collection('signals').add({
-                from: this.myUid,
-                type: 'google_meet_link',
-                link: link.trim(),
-                timestamp: firebase.firestore.FieldValue.serverTimestamp()
-            });
-            const statusEl = document.getElementById('call-status');
-            if (statusEl) statusEl.innerText = 'Встреча создана. Ожидание...';
+        const statusEl = document.getElementById('call-status');
+        if (statusEl) statusEl.innerText = 'Подключение к встрече...';
 
-            // Автоматически открываем встречу для инициатора
-            window.open(link.trim(), '_blank');
-        } else {
-            // Если пользователь отменил, завершаем звонок
-            this.endCall();
-        }
+        // Автоматически открываем встречу для инициатора
+        setTimeout(() => {
+            window.open(meetLink, '_blank');
+        }, 500);
+    }
+
+    generateMeetCode() {
+        // Генерируем код в формате xxx-yyyy-zzz (как у Google Meet)
+        const chars = 'abcdefghijklmnopqrstuvwxyz';
+        const part = () => Array.from({ length: 3 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+        return `${part()}-${part()}-${part()}`;
     }
 
     async endCall() {
@@ -168,7 +167,6 @@ class GroupCall {
         this.roomRef = null;
         this.roomId = null;
         this.myUid = null;
-        document.getElementById('btn-join-meet').classList.add('hidden');
         document.getElementById('call-overlay').classList.add('hidden');
     }
 
