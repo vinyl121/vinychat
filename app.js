@@ -87,9 +87,10 @@ class GroupCall {
     get isActive() { return this._isActive; }
 
     async joinRoom(chatId, uid, withVideo = false) {
-        console.log('[CALL] Joining room...');
+        console.log('[CALL] Joining room...', { withVideo });
         this.myUid = uid;
         this._isActive = true;
+        this.withVideo = withVideo;
 
         // Проверяем есть ли уже активная комната
         const existingRooms = await db.collection('chats').doc(chatId).collection('rooms')
@@ -104,11 +105,16 @@ class GroupCall {
                 participants: firebase.firestore.FieldValue.arrayUnion(uid)
             });
             console.log('[CALL] Joined existing room as receiver');
+
+            // Получаем withVideo из существующей комнаты
+            const roomData = existingRooms.docs[0].data();
+            this.withVideo = roomData.withVideo || false;
         } else {
             // Создаем новую комнату (мы - инициатор)
             this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
                 status: 'active',
                 participants: [uid],
+                withVideo,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
             isInitiator = true;
@@ -126,16 +132,33 @@ class GroupCall {
             }
         });
 
-        // Получаем микрофон
+        // Получаем микрофон (и камеру если видеозвонок)
         try {
             this.localStream = await navigator.mediaDevices.getUserMedia({
                 audio: true,
-                video: false
+                video: this.withVideo ? { width: 640, height: 480 } : false
             });
             console.log('[CALL] Got local stream');
 
             // Останавливаем звук звонка, если он еще играет
             this.sounds.stopAll();
+
+            // Показываем видео элементы и кнопку камеры если это видеозвонок
+            if (this.withVideo) {
+                const localVideo = document.getElementById('local-video');
+                const btnVideo = document.getElementById('btn-toggle-video');
+                const videoLabel = document.getElementById('video-label');
+                const callAvatar = document.getElementById('call-avatar');
+                const callPulse = callAvatar?.parentElement;
+
+                if (localVideo) {
+                    localVideo.srcObject = this.localStream;
+                    localVideo.style.display = 'block';
+                }
+                if (btnVideo) btnVideo.style.display = 'block';
+                if (videoLabel) videoLabel.style.display = 'block';
+                if (callPulse) callPulse.style.display = 'none'; // Скрываем аватар
+            }
         } catch (err) {
             console.error('[CALL] Error getting media:', err);
             alert('Не удалось получить доступ к микрофону!');
@@ -154,15 +177,27 @@ class GroupCall {
         // Слушаем удаленный stream
         this.remoteStream = new MediaStream();
         const remoteAudio = document.getElementById('remote-audio');
+        const remoteVideo = document.getElementById('remote-video');
+
         if (remoteAudio) {
             remoteAudio.srcObject = this.remoteStream;
         }
 
         this.peerConnection.ontrack = (event) => {
-            console.log('[CALL] Got remote track');
+            console.log('[CALL] Got remote track:', event.track.kind);
             event.streams[0].getTracks().forEach(track => {
                 this.remoteStream.addTrack(track);
             });
+
+            // Если это видео трек - показываем видео элемент
+            if (event.track.kind === 'video' && remoteVideo) {
+                remoteVideo.srcObject = this.remoteStream;
+                remoteVideo.style.display = 'block';
+
+                // Скрываем аватар
+                const callPulse = document.getElementById('call-avatar')?.parentElement;
+                if (callPulse) callPulse.style.display = 'none';
+            }
         };
 
         // Слушаем ICE candidates
@@ -282,12 +317,67 @@ class GroupCall {
         this.roomId = null;
         this.myUid = null;
 
+        // Скрываем и очищаем видео элементы
+        const localVideo = document.getElementById('local-video');
+        const remoteVideo = document.getElementById('remote-video');
+        const btnVideo = document.getElementById('btn-toggle-video');
+        const videoLabel = document.getElementById('video-label');
+        const callPulse = document.getElementById('call-avatar')?.parentElement;
+
+        if (localVideo) {
+            localVideo.style.display = 'none';
+            localVideo.srcObject = null;
+        }
+        if (remoteVideo) {
+            remoteVideo.style.display = 'none';
+            remoteVideo.srcObject = null;
+        }
+        if (btnVideo) {
+            btnVideo.style.display = 'none';
+            btnVideo.style.background = '';
+            btnVideo.innerText = '📹';
+        }
+        if (videoLabel) videoLabel.style.display = 'none';
+        if (callPulse) callPulse.style.display = ''; // Показываем обратно аватар
+
         document.getElementById('call-overlay').classList.add('hidden');
     }
 
     get isActive() { return !!this.roomRef; }
-    toggleMute() { }
-    toggleCam() { }
+
+    toggleMute() {
+        if (!this.localStream) return;
+        const audioTrack = this.localStream.getAudioTracks()[0];
+        if (!audioTrack) return;
+
+        audioTrack.enabled = !audioTrack.enabled;
+        const btn = document.getElementById('btn-toggle-mute');
+        if (btn) {
+            btn.innerText = audioTrack.enabled ? '🎤' : '🔇';
+            btn.classList.toggle('muted', !audioTrack.enabled);
+            btn.style.background = audioTrack.enabled ? '' : '#e74c3c';
+        }
+        console.log('[CALL] Mute:', !audioTrack.enabled);
+    }
+
+    toggleVideo() {
+        if (!this.localStream) return;
+        const videoTrack = this.localStream.getVideoTracks()[0];
+        if (!videoTrack) return;
+
+        videoTrack.enabled = !videoTrack.enabled;
+        const btn = document.getElementById('btn-toggle-video');
+        const localVideo = document.getElementById('local-video');
+
+        if (btn) {
+            btn.innerText = videoTrack.enabled ? '📹' : '📵';
+            btn.style.background = videoTrack.enabled ? '' : '#e74c3c';
+        }
+        if (localVideo) {
+            localVideo.style.display = videoTrack.enabled ? 'block' : 'none';
+        }
+        console.log('[CALL] Video:', videoTrack.enabled);
+    }
 }
 
 /* ═══════════════════════════════════
@@ -431,6 +521,8 @@ class Vinychat {
         safeBind('btn-voice-call', () => { console.log('Voice call btn clicked'); this.initiateCall(false); });
         safeBind('btn-video-call', () => { console.log('Video call btn clicked'); this.initiateCall(true); });
         safeBind('btn-call-end', () => this.voice.endCall());
+        safeBind('btn-toggle-mute', () => this.voice.toggleMute());
+        safeBind('btn-toggle-video', () => this.voice.toggleVideo());
         safeBind('modal-close', () => $('modal-container').classList.add('hidden'));
         safeBind('modal-ok', () => $('modal-container').classList.add('hidden'));
         safeBind('btn-back', () => this.showSidebar());
@@ -644,6 +736,12 @@ class Vinychat {
         document.getElementById('incoming-call').classList.add('hidden');
         this.sounds.stopAll();
         if (this.pendingCallUnsub) { this.pendingCallUnsub(); this.pendingCallUnsub = null; }
+
+        // Помечаем комнату как ended чтобы звонящий узнал об отклонении
+        if (this.pendingCall?.roomRef) {
+            await this.pendingCall.roomRef.update({ status: 'ended' }).catch(() => { });
+        }
+
         this.pendingCall = null;
     }
 
