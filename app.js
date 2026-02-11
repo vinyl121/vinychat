@@ -179,11 +179,25 @@ class Vinychat {
         this.listen();
         this._setupMobile();
         window.addEventListener('resize', () => { this.isMobile = window.innerWidth <= 768; });
+        console.log('--- Vinychat Ready ---');
+    }
+
+    async requestNotify() {
+        if (!("Notification" in window)) return;
+        if (Notification.permission === "default") await Notification.requestPermission();
+    }
+
+    notify(title, body) {
+        if (!("Notification" in window)) return;
+        if (Notification.permission === "granted" && document.visibilityState !== "visible") {
+            try { new Notification(title, { body, icon: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }); } catch (e) { console.error(e); }
+        }
     }
 
     _setupMobile() {
         const h = async () => {
             if (this.sounds.ctx && this.sounds.ctx.state === 'suspended') this.sounds.ctx.resume();
+            this.requestNotify();
             document.removeEventListener('touchstart', h);
             document.removeEventListener('click', h);
         };
@@ -193,24 +207,29 @@ class Vinychat {
 
     bind() {
         const $ = id => document.getElementById(id);
-        $('show-register').onclick = e => { e.preventDefault(); $('login-form').classList.add('hidden'); $('register-form').classList.remove('hidden'); };
-        $('show-login').onclick = e => { e.preventDefault(); $('register-form').classList.add('hidden'); $('login-form').classList.remove('hidden'); };
-        $('btn-login').onclick = () => this.login();
-        $('btn-register').onclick = () => this.register();
-        $('btn-logout').onclick = () => auth.signOut();
-        $('btn-send').onclick = () => this.send();
-        $('message-input').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); this.send(); } };
-        $('btn-settings').onclick = () => this.profileModal();
-        $('btn-create-group').onclick = () => this.createGroup();
-        $('btn-chat-settings').onclick = () => this.chatSettingsModal();
-        $('btn-voice-call').onclick = () => this.initiateCall(false);
-        $('btn-video-call').onclick = () => this.initiateCall(true);
-        $('btn-call-end').onclick = () => this.voice.endCall();
-        $('modal-close').onclick = () => $('modal-container').classList.add('hidden');
-        $('modal-ok').onclick = () => $('modal-container').classList.add('hidden');
-        $('btn-back').onclick = () => this.showSidebar();
-        $('btn-accept-call').onclick = () => this.acceptIncoming();
-        $('btn-decline-call').onclick = () => this.declineIncoming();
+        const safeBind = (id, fn) => { const el = $(id); if (el) el.onclick = fn; else console.warn('Element not found:', id); };
+
+        safeBind('show-register', e => { e.preventDefault(); $('login-form').classList.add('hidden'); $('register-form').classList.remove('hidden'); });
+        safeBind('show-login', e => { e.preventDefault(); $('register-form').classList.add('hidden'); $('login-form').classList.remove('hidden'); });
+        safeBind('btn-login', () => this.login());
+        safeBind('btn-register', () => this.register());
+        safeBind('btn-logout', () => auth.signOut());
+        safeBind('btn-send', () => this.send());
+
+        const msgInp = $('message-input');
+        if (msgInp) msgInp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); this.send(); } };
+
+        safeBind('btn-settings', () => this.profileModal());
+        safeBind('btn-create-group', () => this.createGroup());
+        safeBind('btn-chat-settings', () => this.chatSettingsModal());
+        safeBind('btn-voice-call', () => { console.log('Voice call btn clicked'); this.initiateCall(false); });
+        safeBind('btn-video-call', () => { console.log('Video call btn clicked'); this.initiateCall(true); });
+        safeBind('btn-call-end', () => this.voice.endCall());
+        safeBind('modal-close', () => $('modal-container').classList.add('hidden'));
+        safeBind('modal-ok', () => $('modal-container').classList.add('hidden'));
+        safeBind('btn-back', () => this.showSidebar());
+        safeBind('btn-accept-call', () => this.acceptIncoming());
+        safeBind('btn-decline-call', () => this.declineIncoming());
     }
 
     listen() {
@@ -234,8 +253,10 @@ class Vinychat {
     hideSidebar() { if (this.isMobile) document.getElementById('sidebar').classList.add('sidebar-hidden'); }
 
     async sync() {
+        if (!this.user) return;
         const doc = await db.collection('users').doc(this.user.uid).get();
-        const name = doc.exists ? doc.data().username : this.user.email.split('@')[0];
+        const defName = this.user.email ? this.user.email.split('@')[0] : 'User';
+        const name = doc.exists ? doc.data().username : defName;
         await db.collection('users').doc(this.user.uid).set({ uid: this.user.uid, username: name, avatar: name[0].toUpperCase() }, { merge: true });
         document.getElementById('current-username').innerText = name;
         document.getElementById('current-user-avatar').innerText = name[0].toUpperCase();
@@ -354,8 +375,8 @@ class Vinychat {
     showIncomingBanner(name, isVideo) {
         this.sounds.startRinging();
         document.getElementById('incoming-name').innerText = name;
-        document.getElementById('incoming-label').innerText = isVideo ? '📹 Входящий видеозвонок' : '📞 Входящий вызов';
         document.getElementById('incoming-call').classList.remove('hidden');
+        this.notify('Входящий вызов', `Звонит ${name}`);
     }
 
     dismissIncoming() {
@@ -460,7 +481,10 @@ class Vinychat {
         area.scrollTop = area.scrollHeight;
         if (prev > 0 && docs.length > prev) {
             const last = docs[docs.length - 1].data();
-            if (last.senderId !== this.user.uid && last.senderId !== 'system') this.sounds.playMsgReceived();
+            if (last.senderId !== this.user.uid && last.senderId !== 'system') {
+                this.sounds.playMsgReceived();
+                this.notify(chatData.name || 'Vinychat', last.text);
+            }
         }
     }
 
