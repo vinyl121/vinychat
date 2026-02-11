@@ -69,23 +69,23 @@ class GroupCall {
         this.myUid = uid;
         this._isActive = true;
 
-        // Поиск или создание комнаты
-        const snap = await db.collection('chats').doc(chatId).collection('rooms')
-            .where('status', '==', 'active').limit(1).get();
+        // Сначала завершаем все старые активные комнаты
+        const oldRooms = await db.collection('chats').doc(chatId).collection('rooms')
+            .where('status', '==', 'active').get();
 
-        if (snap.empty) {
-            this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
-                status: 'active',
-                participants: [uid],
-                withVideo,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-            // Инициатор - создаем встречу
-            this.startGoogleMeet();
-        } else {
-            this.roomRef = snap.docs[0].ref;
-            await this.roomRef.update({ participants: firebase.firestore.FieldValue.arrayUnion(uid) });
-        }
+        const batch = db.batch();
+        oldRooms.docs.forEach(doc => {
+            batch.update(doc.ref, { status: 'ended' });
+        });
+        await batch.commit();
+
+        // Создаем новую комнату
+        this.roomRef = await db.collection('chats').doc(chatId).collection('rooms').add({
+            status: 'active',
+            participants: [uid],
+            withVideo,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
 
         this.roomId = this.roomRef.id;
 
@@ -102,28 +102,49 @@ class GroupCall {
                     if (ch.type === 'added') {
                         const link = ch.doc.data().link;
                         const joinBtn = document.getElementById('btn-join-meet');
-                        joinBtn.onclick = () => window.open(link, '_blank');
-                        joinBtn.classList.remove('hidden');
-                        document.getElementById('call-status').innerText = 'Защищенный мост готов';
+                        if (joinBtn) {
+                            joinBtn.onclick = () => window.open(link, '_blank');
+                            joinBtn.classList.remove('hidden');
+                        }
+                        const statusEl = document.getElementById('call-status');
+                        if (statusEl) statusEl.innerText = 'Нажмите кнопку для входа в Meet';
                         this.sounds.playMsgReceived();
                     }
                 });
             });
 
+        // Инициатор сразу создает встречу
+        this.startGoogleMeet();
         return true;
     }
 
     async startGoogleMeet() {
-        const link = prompt("Создаем защищенную линию через Google Meet.\n\n1. Сейчас откроется вкладка Google Meet.\n2. Нажмите 'Новая встреча' -> 'Начать встречу с мгновенным запуском'.\n3. Скопируйте ссылку и вставьте ее сюда:");
-        window.open('https://meet.google.com/new', '_blank');
+        // Автоматически создаем встречу и открываем в новой вкладке
+        const meetUrl = 'https://meet.google.com/new';
+        const meetWindow = window.open(meetUrl, '_blank');
+
+        const link = prompt(
+            "Google Meet откроется в новой вкладке.\n\n" +
+            "1. Нажмите 'Новая встреча' → 'Начать встречу с мгновенным запуском'\n" +
+            "2. Скопируйте ссылку на встречу\n" +
+            "3. Вставьте её сюда:"
+        );
 
         if (link && link.includes('meet.google.com')) {
             await this.roomRef.collection('signals').add({
                 from: this.myUid,
                 type: 'google_meet_link',
-                link: link.trim()
+                link: link.trim(),
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
             });
-            document.getElementById('call-status').innerText = 'Линия создана. Ожидание собеседника...';
+            const statusEl = document.getElementById('call-status');
+            if (statusEl) statusEl.innerText = 'Встреча создана. Ожидание...';
+
+            // Автоматически открываем встречу для инициатора
+            window.open(link.trim(), '_blank');
+        } else {
+            // Если пользователь отменил, завершаем звонок
+            this.endCall();
         }
     }
 
@@ -461,8 +482,8 @@ class Vinychat {
 
         try {
             // Firestore limitation: we need to fetch all users and filter client-side for proper search
-            // For better performance, you could use Algolia or similar service
-            const snap = await db.collection('users').limit(50).get();
+            // Increased limit to show more users
+            const snap = await db.collection('users').limit(200).get();
 
             const queryLower = query.toLowerCase();
             const users = snap.docs
@@ -471,9 +492,10 @@ class Vinychat {
                     if (u.uid === this.user.uid) return false; // exclude self
                     const usernameLower = (u.username || '').toLowerCase();
                     const emailLower = (u.email || '').toLowerCase();
+                    // Search in both username and email
                     return usernameLower.includes(queryLower) || emailLower.includes(queryLower);
                 })
-                .slice(0, 5); // limit results
+                .slice(0, 10); // show top 10 results
 
             this.renderSearchResults(users);
         } catch (e) {
