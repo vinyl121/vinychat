@@ -213,7 +213,7 @@ class Vinychat {
         safeBind('show-login', e => { e.preventDefault(); $('register-form').classList.add('hidden'); $('login-form').classList.remove('hidden'); });
         safeBind('btn-login', () => this.login());
         safeBind('btn-register', () => this.register());
-        safeBind('btn-logout', () => auth.signOut());
+        safeBind('btn-logout', () => { console.log('Logout clicked'); auth.signOut().then(() => location.reload()); });
         safeBind('btn-send', () => this.send());
 
         const msgInp = $('message-input');
